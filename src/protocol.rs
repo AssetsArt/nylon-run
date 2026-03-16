@@ -38,6 +38,10 @@ pub struct ProcessConfig {
     pub acme: Option<String>,
     pub deny: Vec<String>,
     pub allow: Vec<String>,
+    #[serde(default)]
+    pub is_oci: bool,
+    #[serde(default)]
+    pub oci_reference: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

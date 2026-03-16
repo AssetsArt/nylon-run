@@ -3,6 +3,7 @@ mod cli;
 mod client;
 mod daemon;
 mod metrics;
+mod oci;
 mod process;
 mod protocol;
 mod proxy;
@@ -109,6 +110,9 @@ fn derive_name(path: &str, name: &Option<String>) -> String {
     if let Some(n) = name {
         return n.clone();
     }
+    if oci::is_oci_reference(path) {
+        return oci::image_name_from_ref(path);
+    }
     std::path::Path::new(path)
         .file_name()
         .and_then(|f| f.to_str())
@@ -153,6 +157,9 @@ async fn main() {
                 None => HashMap::new(),
             };
 
+            let is_oci = oci::is_oci_reference(&path);
+            let oci_reference = if is_oci { Some(path.clone()) } else { None };
+
             let config = ProcessConfig {
                 name: derive_name(&path, &name),
                 path,
@@ -166,6 +173,8 @@ async fn main() {
                 acme: None,
                 deny: parse_deny(&deny),
                 allow: parse_allow(&allow),
+                is_oci,
+                oci_reference,
             };
 
             client::execute(Request::Bin { config }).await;
@@ -207,6 +216,9 @@ async fn main() {
                 key_path: s[1].clone(),
             });
 
+            let is_oci = oci::is_oci_reference(&path);
+            let oci_reference = if is_oci { Some(path.clone()) } else { None };
+
             let config = ProcessConfig {
                 name: derive_name(&path, &name),
                 path,
@@ -220,6 +232,8 @@ async fn main() {
                 acme,
                 deny: parse_deny(&deny),
                 allow: parse_allow(&allow),
+                is_oci,
+                oci_reference,
             };
 
             client::execute(Request::Run { config }).await;

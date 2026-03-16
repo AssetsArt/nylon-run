@@ -65,7 +65,35 @@ impl ProcessManager {
         ))
     }
 
-    async fn start_process(&self, config: ProcessConfig) -> Result<ManagedProcess, String> {
+    async fn start_process(&mut self, config: ProcessConfig) -> Result<ManagedProcess, String> {
+        let mut config = config;
+
+        // OCI: pull and extract if needed
+        if config.is_oci {
+            let reference = config
+                .oci_reference
+                .as_deref()
+                .unwrap_or(&config.path);
+            let extract_dir =
+                crate::oci::pull_and_extract(reference, &config.name).await?;
+
+            let (entrypoint, extra_args) = crate::oci::find_entrypoint(&extract_dir)?;
+            config.path = entrypoint;
+
+            // Prepend image entrypoint args before user args
+            if !extra_args.is_empty() {
+                let mut merged = extra_args;
+                merged.extend(config.args.clone());
+                config.args = merged;
+            }
+
+            info!(
+                name = %config.name,
+                binary = %config.path,
+                "OCI image ready"
+            );
+        }
+
         let mut cmd = Command::new(&config.path);
         cmd.args(&config.args);
 
