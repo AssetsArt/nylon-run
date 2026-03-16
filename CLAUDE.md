@@ -28,6 +28,9 @@ nyrun run ./xxx --p domain.com:443:8000 --ssl cert.pem key.pem  # HTTPS with man
 nyrun run ./xxx --p domain.com:443:8000 --acme user@mail.com   # HTTPS with auto Let's Encrypt
 nyrun run ./xxx --env-file .env --p 80:8000      # load env vars from file
 nyrun bin ./xxx --env-file .env                   # env file with process-only mode
+nyrun run ./xxx --deny net,io --p 80:8000         # sandbox: deny network & disk I/O (Linux eBPF)
+nyrun run ./xxx --deny io --allow /tmp/data,/var/log --p 80:8000  # deny I/O except whitelisted paths
+nyrun bin ./xxx --deny net                        # process-only with network denied
 nyrun run ghcr.io/xx/xx:latest --p 8081:8081     # pull OCI image, extract, proxy + run natively
 nyrun ls                                          # list all managed processes with status
 nyrun del <name>                                  # stop and remove a process
@@ -52,6 +55,10 @@ nyrun restore backup.zip                         # restore by extracting zip ove
   - `--ssl CERT_PATH KEY_PATH` — enable TLS with manual certs
   - `--acme EMAIL` — auto SSL via Let's Encrypt ACME (HTTP-01 challenge), certs stored in `/tmp/nyrun/certs/`
   - `--env-file PATH` — load environment variables from a dotenv file, passed to the spawned process
+  - `--deny CAPS` — sandbox the process using eBPF (Linux only). Comma-separated capabilities to deny:
+    - `net` — block network access (outbound/inbound)
+    - `io` — block filesystem I/O (read/write outside working dir)
+  - `--allow PATHS` — whitelist comma-separated directories when using `--deny io` (e.g. `--allow /tmp/data,/var/log`)
   - Accepts local paths (binary or directory) or OCI image references (e.g. `ghcr.io/org/image:tag`)
 - `backup` / `restore` — zip/unzip the entire `/tmp/nyrun/` working directory
 
@@ -68,6 +75,11 @@ All runtime data (extracted binaries, OCI layers, state, logs) lives under `/tmp
    - Process lifecycle: start, stop, restart, delete
    - Auto-restart on crash
    - Log capture (stdout/stderr) per process
+   - **eBPF Sandboxing (Linux only)** — restrict process capabilities at kernel level
+     - `--deny net` attaches eBPF programs to block socket syscalls for the process
+     - `--deny io` restricts filesystem access outside the process working directory
+     - `--allow` whitelists specific paths when `io` is denied (eBPF checks path prefix)
+     - Enforced per-process, no container overhead
 
 2. **Reverse Proxy (Pingora)** — activated by `run` subcommand with `--p`
    - Port mapping: route `HOST_PORT` → `APP_PORT` on the managed process
@@ -152,4 +164,5 @@ Reference: [`nylon-mesh/src/tls_accept.rs`](https://github.com/AssetsArt/nylon-m
 | `instant-acme` or `acme2` | ACME / Let's Encrypt client |
 | `prometheus` / `prometheus-client` | Metrics exposition |
 | `zip` | Backup/restore |
+| `aya` or `libbpf-rs` | eBPF sandboxing (Linux only) |
 | `mimalloc` | Memory allocator |
