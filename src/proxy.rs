@@ -4,10 +4,9 @@ use http::StatusCode;
 use moka::future::Cache;
 use pingora::http::ResponseHeader;
 use pingora::upstreams::peer::HttpPeer;
-use pingora_core::server::configuration::ServerConf;
 use pingora_core::server::Server;
-use pingora_proxy::{http_proxy_service, ProxyHttp, Session};
-use std::collections::HashMap;
+use pingora_core::server::configuration::ServerConf;
+use pingora_proxy::{ProxyHttp, Session, http_proxy_service};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -57,7 +56,6 @@ impl RouteTable {
 
 pub struct NyrunProxy {
     routes: Arc<RwLock<RouteTable>>,
-    listen_port: u16,
     cache: Cache<String, (ResponseHeader, Bytes)>,
 }
 
@@ -66,6 +64,20 @@ pub struct ProxyCtx {
     should_cache: bool,
     response_header: Option<ResponseHeader>,
     response_body: Vec<u8>,
+}
+
+/// Get the listening port from the session's socket digest
+fn get_listen_port(session: &Session) -> u16 {
+    if let Some(digest) = session.digest() {
+        if let Some(sd) = &digest.socket_digest {
+            if let Some(addr) = sd.local_addr() {
+                if let Some(inet) = addr.as_inet() {
+                    return inet.port();
+                }
+            }
+        }
+    }
+    80
 }
 
 #[async_trait]
@@ -86,9 +98,10 @@ impl ProxyHttp for NyrunProxy {
         session: &mut Session,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<bool> {
+        let listen_port = get_listen_port(session);
         let host = extract_host(session);
         let table = self.routes.read().await;
-        let route = table.find(self.listen_port, host.as_deref());
+        let route = table.find(listen_port, host.as_deref());
 
         match route {
             Some(RouteEntry {
@@ -123,7 +136,7 @@ impl ProxyHttp for NyrunProxy {
                 let cache_key = format!("{}{}{}", host_str, uri, query);
                 ctx.cache_key = cache_key.clone();
 
-                // Check Tier 1 cache
+                // Check cache
                 if let Some((mut header, body)) = self.cache.get(&cache_key).await {
                     debug!(key = %cache_key, "cache HIT");
                     let _ = header.insert_header("X-Cache", "HIT");
@@ -156,9 +169,10 @@ impl ProxyHttp for NyrunProxy {
         session: &mut Session,
         _ctx: &mut Self::CTX,
     ) -> pingora::Result<Box<HttpPeer>> {
+        let listen_port = get_listen_port(session);
         let host = extract_host(session);
         let table = self.routes.read().await;
-        let route = table.find(self.listen_port, host.as_deref());
+        let route = table.find(listen_port, host.as_deref());
 
         match route {
             Some(RouteEntry {
@@ -193,10 +207,8 @@ impl ProxyHttp for NyrunProxy {
 
         // X-Forwarded-Proto
         let is_https = session.digest().is_some_and(|d| d.ssl_digest.is_some());
-        let _ = upstream_request.insert_header(
-            "X-Forwarded-Proto",
-            if is_https { "https" } else { "http" },
-        );
+        let _ = upstream_request
+            .insert_header("X-Forwarded-Proto", if is_https { "https" } else { "http" });
 
         // X-Forwarded-Host
         if let Some(host) = session.req_header().headers.get("Host") {
@@ -289,8 +301,7 @@ async fn serve_spa(session: &mut Session, uri_path: &str, dir: &Path) -> pingora
     let canonical_dir = match dir.canonicalize() {
         Ok(d) => d,
         Err(_) => {
-            let mut header =
-                ResponseHeader::build(StatusCode::INTERNAL_SERVER_ERROR, Some(1))?;
+            let mut header = ResponseHeader::build(StatusCode::INTERNAL_SERVER_ERROR, Some(1))?;
             header.insert_header("content-type", "text/plain")?;
             session
                 .write_response_header(Box::new(header), false)
@@ -376,7 +387,7 @@ const CACHE_TTL_SECS: u64 = 60;
 pub struct ProxyManager {
     routes: Arc<RwLock<RouteTable>>,
     cache: Cache<String, (ResponseHeader, Bytes)>,
-    servers: HashMap<u16, std::thread::JoinHandle<()>>,
+    ports: Vec<u16>,
 }
 
 impl ProxyManager {
@@ -389,7 +400,7 @@ impl ProxyManager {
         Self {
             routes: Arc::new(RwLock::new(RouteTable::default())),
             cache,
-            servers: HashMap::new(),
+            ports: Vec::new(),
         }
     }
 
@@ -402,7 +413,6 @@ impl ProxyManager {
     ) -> Result<(), String> {
         {
             let mut table = self.routes.write().await;
-            // Remove existing route with same name to avoid duplicates
             table.entries.retain(|r| r.name != name);
             table.entries.push(RouteEntry {
                 name: name.to_string(),
@@ -412,14 +422,21 @@ impl ProxyManager {
             });
         }
 
-        // Spawn a Pingora server for this port if not already running
-        if !self.servers.contains_key(&port) {
+        let need_new_listener = !self.ports.contains(&port);
+        if need_new_listener {
+            self.ports.push(port);
+        }
+
+        // Start a new Pingora server with ALL ports.
+        // Pingora uses SO_REUSEPORT so the new server coexists with any previous one
+        // while the old one continues to serve existing connections.
+        if need_new_listener {
             let routes = Arc::clone(&self.routes);
             let cache = self.cache.clone();
-            let handle = std::thread::spawn(move || {
-                start_pingora_listener(port, routes, cache);
+            let ports = self.ports.clone();
+            std::thread::spawn(move || {
+                start_pingora_server(ports, routes, cache);
             });
-            self.servers.insert(port, handle);
         }
 
         info!(
@@ -439,15 +456,15 @@ impl ProxyManager {
     }
 }
 
-fn start_pingora_listener(
-    port: u16,
+fn start_pingora_server(
+    ports: Vec<u16>,
     routes: Arc<RwLock<RouteTable>>,
     cache: Cache<String, (ResponseHeader, Bytes)>,
 ) {
     let mut server = match Server::new(None) {
         Ok(s) => s,
         Err(e) => {
-            error!(port, error = %e, "failed to create pingora server");
+            error!(error = %e, "failed to create pingora server");
             return;
         }
     };
@@ -461,20 +478,19 @@ fn start_pingora_listener(
         grace_period_seconds: Some(0),
         graceful_shutdown_timeout_seconds: Some(0),
         threads,
+        work_stealing: true,
         ..Default::default()
     });
     server.bootstrap();
 
-    let proxy = NyrunProxy {
-        routes,
-        listen_port: port,
-        cache,
-    };
+    let proxy = NyrunProxy { routes, cache };
     let mut service = http_proxy_service(&server.configuration, proxy);
-    service.add_tcp(&format!("0.0.0.0:{}", port));
+    for port in &ports {
+        service.add_tcp(&format!("0.0.0.0:{}", port));
+    }
 
     server.add_service(service);
 
-    info!(port, "pingora proxy listener started");
+    info!(ports = ?ports, "pingora proxy started");
     server.run_forever();
 }
