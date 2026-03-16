@@ -42,6 +42,8 @@ nyrun logs <name>                                 # tail logs for a process
 nyrun logs <name> --lines 100                    # last N lines
 nyrun backup -o output_name                      # zip entire /tmp/nyrun/ as backup
 nyrun restore backup.zip                         # restore by extracting zip over /tmp/nyrun/
+nyrun link <api-key>                              # connect this instance to cloud UI
+nyrun unlink                                      # disconnect from cloud UI
 ```
 
 ### Key CLI Concepts
@@ -124,6 +126,26 @@ All runtime data (extracted binaries, OCI layers, state, logs) lives under `/tmp
    - **Cache metrics:** hit/miss ratio (T1/T2), cache size, eviction count
    - **System metrics:** total managed processes, OCI pull stats
    - Ready for Grafana dashboards out of the box
+
+8. **Cloud UI (nyrun-cloud)** — centralized web dashboard for managing multiple nyrun instances
+   - **Multi-instance:** single dashboard to monitor and control all linked nyrun agents
+   - **Auth:** login with team/org support, role-based access (admin, viewer)
+   - **Agent → Cloud (push model):**
+     - nyrun agent pushes metrics, logs, and status to cloud via WebSocket or gRPC
+     - `nyrun link <api-key>` connects an instance to the cloud
+     - Agent maintains persistent outbound connection — no inbound ports needed on the agent side
+   - **Cloud → Agent commands:** restart, reload, del, update pushed back through the same connection
+   - **Dashboard features:**
+     - Real-time process list, status, CPU/memory per instance
+     - Aggregated logs viewer (stream from multiple agents)
+     - Proxy metrics & cache stats per instance
+     - Deploy: trigger OCI pull + run from the UI
+     - Backup/restore management
+   - **Architecture:**
+     - Cloud API server (separate deployable) — stores agent state, user accounts, org/team config
+     - Web frontend (SPA) — served by the cloud API or separately
+     - Agent heartbeat + reconnect with exponential backoff
+     - API key per instance, scoped to org/team
 
 ### Key Design Decisions
 
