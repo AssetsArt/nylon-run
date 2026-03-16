@@ -31,7 +31,8 @@ nyrun bin ./xxx --env-file .env                   # env file with process-only m
 nyrun run ./xxx --deny net,io --p 80:8000         # sandbox: deny network & disk I/O (Linux eBPF)
 nyrun run ./xxx --deny io --allow /tmp/data,/var/log --p 80:8000  # deny I/O except whitelisted paths
 nyrun bin ./xxx --deny net                        # process-only with network denied
-nyrun run ghcr.io/xx/xx:latest --p 8081:8081     # pull OCI image, extract, proxy + run natively
+nyrun run ghcr.io/xx/xx:latest --p 8081:8081     # pull OCI image, isolated to its own folder by default
+nyrun run ghcr.io/xx/xx:latest --allow all --p 8081:8081  # OCI but allow full filesystem access
 nyrun ls                                          # list all managed processes with status
 nyrun del <name>                                  # stop and remove a process
 nyrun restart <name>                              # restart a process
@@ -104,7 +105,10 @@ All runtime data (extracted binaries, OCI layers, state, logs) lives under `/tmp
    - Stores process definitions and runtime state
    - Survives restarts — processes auto-recover on nyrun startup
 
-4. **OCI Puller** — pull images from OCI registries, extract to `/tmp/nyrun/`, run natively (no containers)
+4. **OCI Puller** — pull images from OCI registries, extract to `/tmp/nyrun/oci/<name>/`, run natively (no containers)
+   - **Isolated by default:** OCI processes are sandboxed to their own folder (`/tmp/nyrun/oci/<name>/`) via eBPF on Linux — no `--deny io` needed
+   - `--allow PATHS` to whitelist additional directories, `--allow all` to disable isolation entirely
+   - Behaves like a lightweight container without the runtime overhead
 
 5. **Backup/Restore** — zip the entire `/tmp/nyrun/` directory; restore by overwriting it
 
