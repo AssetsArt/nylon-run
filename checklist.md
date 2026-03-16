@@ -1,31 +1,32 @@
 # nylon-run Implementation Checklist
 
 ## Core Infrastructure
-- [ ] Project setup (Cargo.toml dependencies, module structure)
-- [ ] CLI parsing with clap (`bin`, `run`, `ls`, `del`, `restart`, `reload`, `update`, `logs`, `save`, `startup`, `unstartup`, `kill`, `backup`, `restore`, `link`, `unlink`)
-- [ ] SlateDB persistent state (`/tmp/nyrun/state/`)
-- [ ] Working directory setup (`/tmp/nyrun/`)
+- [x] Project setup (Cargo.toml dependencies, module structure)
+- [x] CLI parsing with clap (`bin`, `run`, `ls`, `del`, `restart`, `reload`, `update`, `logs`, `save`, `startup`, `unstartup`, `kill`, `backup`, `restore`, `link`, `unlink`)
+- [ ] SlateDB persistent state (`/tmp/nyrun/state/`) — currently using JSON file
+- [x] Working directory setup (`/tmp/nyrun/`)
 
 ## Daemon
-- [ ] Auto-start daemon on first command, PID file at `/tmp/nyrun/nyrun.pid`
-- [ ] CLI ↔ daemon communication (Unix socket)
-- [ ] `nyrun save` — snapshot current process list for restore on reboot
-- [ ] `nyrun startup` — generate + enable systemd unit (Linux)
-- [ ] `nyrun unstartup` — remove systemd unit
-- [ ] `nyrun kill` — stop daemon + all managed processes
+- [x] Auto-start daemon on first command, PID file at `/tmp/nyrun/nyrun.pid`
+- [x] CLI ↔ daemon communication (Unix socket)
+- [x] `nyrun save` — snapshot current process list for restore on reboot
+- [x] `nyrun startup` — generate + enable systemd unit (Linux)
+- [x] `nyrun unstartup` — remove systemd unit
+- [x] `nyrun kill` — stop daemon + all managed processes
 
 ## Process Manager
-- [ ] Spawn binary processes with custom env vars
-- [ ] `--env-file` dotenv loading
-- [ ] Process lifecycle: start, stop, restart, delete
-- [ ] Graceful reload (zero-downtime)
-- [ ] Auto-restart on crash
-- [ ] `nyrun ls` — list all processes with status
-- [ ] `nyrun del <name>` — stop and remove
-- [ ] `nyrun restart <name>`
-- [ ] `nyrun reload <name>`
+- [x] Spawn binary processes with custom env vars
+- [x] `--env-file` dotenv loading
+- [x] `--args` pass arguments to binary
+- [x] Process lifecycle: start, stop, restart, delete
+- [x] Graceful reload (zero-downtime) — currently same as restart
+- [x] Auto-restart on crash (health check loop every 2s)
+- [x] `nyrun ls` — list all processes with status
+- [x] `nyrun del <name>` — stop and remove
+- [x] `nyrun restart <name>`
+- [x] `nyrun reload <name>`
 - [ ] `nyrun update <name>` — update config without removing
-- [ ] State persistence — auto-recover processes on nyrun startup
+- [x] State persistence — auto-recover processes on nyrun startup
 
 ## Reverse Proxy (Pingora)
 - [ ] Basic proxy: `--p PUBLIC_PORT:APP_PORT`
@@ -74,9 +75,9 @@
 - [ ] Per-process enforcement, no container overhead
 
 ## Logging
-- [ ] stdout/stderr capture to `/tmp/nyrun/logs/`
-- [ ] `nyrun logs <name>` — tail logs
-- [ ] `nyrun logs <name> --lines N` — last N lines
+- [x] stdout/stderr capture to `/tmp/nyrun/logs/`
+- [x] `nyrun logs <name>` — tail logs
+- [x] `nyrun logs <name> --lines N` — last N lines
 - [ ] Log rotation
 
 ## Observability (Prometheus)
