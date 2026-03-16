@@ -1,7 +1,8 @@
 use crate::process::ProcessManager;
-use crate::protocol::{self, ProcessConfig, Request, Response};
+use crate::protocol::{self, PortMapping, ProcessConfig, Request, Response, SslConfig};
 use crate::proxy::{Backend, ProxyManager};
 use crate::state;
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -9,7 +10,7 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::Mutex;
 use tracing::{error, info};
 
-const SOCK_PATH: &str = "/tmp/nyrun/nyrun.sock";
+const SOCK_PATH: &str = "/var/run/nyrun/nyrun.sock";
 
 pub struct DaemonState {
     pub process_mgr: ProcessManager,
@@ -33,9 +34,16 @@ pub async fn run_server(state: Arc<Mutex<DaemonState>>) {
     // Spawn process health checker
     let state_clone = Arc::clone(&state);
     tokio::spawn(async move {
+        let mut tick = 0u64;
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            state_clone.lock().await.process_mgr.check_and_restart().await;
+            let mut st = state_clone.lock().await;
+            st.process_mgr.check_and_restart().await;
+            // Rotate logs every ~60s (30 ticks * 2s)
+            tick += 1;
+            if tick % 30 == 0 {
+                st.process_mgr.rotate_logs();
+            }
         }
     });
 
@@ -111,9 +119,14 @@ async fn handle_request(request: Request, state: &Arc<Mutex<DaemonState>>) -> Re
                 Err(e) => Response::Error(e),
             }
         }
-        Request::Update { name, .. } => {
-            Response::Error(format!("update not yet implemented for '{}'", name))
-        }
+        Request::Update {
+            name,
+            port,
+            ssl,
+            acme,
+            env_file,
+            args,
+        } => handle_update(state, name, port, ssl, acme, env_file, args).await,
         Request::Logs { name, lines } => {
             let st = state.lock().await;
             match st.process_mgr.get_logs(&name, lines) {
@@ -138,10 +151,188 @@ async fn handle_request(request: Request, state: &Arc<Mutex<DaemonState>>) -> Re
     }
 }
 
+async fn handle_update(
+    state: &Arc<Mutex<DaemonState>>,
+    name: String,
+    port: Option<String>,
+    ssl: Option<Vec<String>>,
+    acme: Option<String>,
+    env_file: Option<String>,
+    args: Option<String>,
+) -> Response {
+    // Parse port mapping if provided
+    let port_mapping = match port.as_deref() {
+        Some(p) => match parse_port_mapping_str(p) {
+            Ok(pm) => Some(pm),
+            Err(e) => return Response::Error(e),
+        },
+        None => None,
+    };
+
+    // Parse SSL config if provided
+    let ssl_config = ssl.map(|s| SslConfig {
+        cert_path: s.first().cloned().unwrap_or_default(),
+        key_path: s.get(1).cloned().unwrap_or_default(),
+    });
+
+    // Parse env file if provided
+    let env_vars = match &env_file {
+        Some(ef) => match parse_env_file_str(ef) {
+            Ok(v) => Some(v),
+            Err(e) => return Response::Error(e),
+        },
+        None => None,
+    };
+
+    // Parse args if provided
+    let parsed_args = args.as_ref().map(|a| shlex::split(a).unwrap_or_default());
+
+    let mut st = state.lock().await;
+
+    // Update the config in-place
+    let old_config = match st.process_mgr.update_config(
+        &name,
+        port_mapping,
+        ssl_config,
+        acme,
+        env_file,
+        env_vars,
+        parsed_args,
+    ) {
+        Ok(old) => old,
+        Err(e) => return Response::Error(e),
+    };
+
+    // Check if proxy route needs updating (port mapping changed)
+    if port.is_some() {
+        // Remove old routes and add new ones
+        st.proxy_mgr.remove_routes(&name).await;
+
+        // Get the updated config from process manager
+        let configs = st.process_mgr.get_configs();
+        if let Some(cfg) = configs.iter().find(|c| c.name == name) {
+            if let Some(pm) = &cfg.port_mapping {
+                let backend = if cfg.spa {
+                    let dir = PathBuf::from(&cfg.path);
+                    Backend::Spa(dir.canonicalize().unwrap_or(dir))
+                } else {
+                    let app_port = pm.app_port.unwrap_or(pm.public_port);
+                    let addr: SocketAddr = format!("127.0.0.1:{}", app_port).parse().unwrap();
+                    Backend::Proxy(addr)
+                };
+
+                if let Err(e) = st
+                    .proxy_mgr
+                    .add_route(&name, pm.public_port, pm.host.clone(), backend)
+                    .await
+                {
+                    // Revert config on proxy failure
+                    let _ = st.process_mgr.update_config(
+                        &name,
+                        old_config.port_mapping,
+                        old_config.ssl,
+                        old_config.acme,
+                        old_config.env_file,
+                        Some(old_config.env_vars),
+                        Some(old_config.args),
+                    );
+                    return Response::Error(format!("proxy route update failed: {e}"));
+                }
+            }
+        }
+    }
+
+    // Restart the process if it has a child (not SPA-only)
+    let configs = st.process_mgr.get_configs();
+    let is_spa = configs
+        .iter()
+        .find(|c| c.name == name)
+        .map_or(false, |c| c.spa);
+
+    if !is_spa {
+        match st.process_mgr.restart(&name).await {
+            Ok(msg) => Response::Ok(format!("updated and restarted: {msg}")),
+            Err(e) => Response::Error(format!("config updated but restart failed: {e}")),
+        }
+    } else {
+        Response::Ok(format!("'{}' config updated", name))
+    }
+}
+
+fn parse_port_mapping_str(port: &str) -> Result<PortMapping, String> {
+    let parts: Vec<&str> = port.split(':').collect();
+    match parts.len() {
+        1 => {
+            let p: u16 = parts[0]
+                .parse()
+                .map_err(|_| format!("invalid port: {}", parts[0]))?;
+            Ok(PortMapping {
+                host: None,
+                public_port: p,
+                app_port: None,
+            })
+        }
+        2 => {
+            let public: u16 = parts[0]
+                .parse()
+                .map_err(|_| format!("invalid port: {}", parts[0]))?;
+            let app: u16 = parts[1]
+                .parse()
+                .map_err(|_| format!("invalid port: {}", parts[1]))?;
+            Ok(PortMapping {
+                host: None,
+                public_port: public,
+                app_port: Some(app),
+            })
+        }
+        3 => {
+            let host = parts[0].to_string();
+            let public: u16 = parts[1]
+                .parse()
+                .map_err(|_| format!("invalid port: {}", parts[1]))?;
+            let app: u16 = parts[2]
+                .parse()
+                .map_err(|_| format!("invalid port: {}", parts[2]))?;
+            Ok(PortMapping {
+                host: Some(host),
+                public_port: public,
+                app_port: Some(app),
+            })
+        }
+        _ => Err(format!("invalid port mapping: {port}")),
+    }
+}
+
+fn parse_env_file_str(path: &str) -> Result<HashMap<String, String>, String> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("failed to read env file '{}': {}", path, e))?;
+    let mut vars = HashMap::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some((key, value)) = line.split_once('=') {
+            let key = key.trim().to_string();
+            let value = value
+                .trim()
+                .trim_matches('"')
+                .trim_matches('\'')
+                .to_string();
+            vars.insert(key, value);
+        }
+    }
+    Ok(vars)
+}
+
 async fn handle_run(state: &Arc<Mutex<DaemonState>>, config: ProcessConfig) -> Response {
     let name = config.name.clone();
     let is_spa = config.spa;
     let port_mapping = config.port_mapping.clone();
+    let ssl = config
+        .ssl
+        .as_ref()
+        .map(|s| (s.cert_path.clone(), s.key_path.clone()));
 
     let pm = match &port_mapping {
         Some(pm) => pm.clone(),
@@ -160,7 +351,7 @@ async fn handle_run(state: &Arc<Mutex<DaemonState>>, config: ProcessConfig) -> R
 
         if let Err(e) = st
             .proxy_mgr
-            .add_route(&name, pm.public_port, pm.host.clone(), backend)
+            .add_route_with_tls(&name, pm.public_port, pm.host.clone(), backend, ssl)
             .await
         {
             return Response::Error(e);
@@ -171,10 +362,7 @@ async fn handle_run(state: &Arc<Mutex<DaemonState>>, config: ProcessConfig) -> R
             return Response::Error(e);
         }
 
-        Response::Ok(format!(
-            "SPA '{}' serving on port {}",
-            name, pm.public_port
-        ))
+        Response::Ok(format!("SPA '{}' serving on port {}", name, pm.public_port))
     } else {
         // Process + proxy mode
         let app_port = pm.app_port.unwrap_or(pm.public_port);
@@ -189,7 +377,7 @@ async fn handle_run(state: &Arc<Mutex<DaemonState>>, config: ProcessConfig) -> R
                 let backend = Backend::Proxy(backend_addr);
                 if let Err(e) = st
                     .proxy_mgr
-                    .add_route(&name, pm.public_port, pm.host.clone(), backend)
+                    .add_route_with_tls(&name, pm.public_port, pm.host.clone(), backend, ssl)
                     .await
                 {
                     // Rollback: kill the process

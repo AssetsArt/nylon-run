@@ -2,15 +2,15 @@ use crate::protocol::ProcessConfig;
 use std::path::PathBuf;
 use tracing::{error, info};
 
-const NYRUN_DIR: &str = "/tmp/nyrun";
+const NYRUN_DIR: &str = "/var/run/nyrun";
 
 fn state_path() -> PathBuf {
     PathBuf::from(NYRUN_DIR).join("state.json")
 }
 
 pub fn save_state(configs: &[ProcessConfig]) -> Result<(), String> {
-    let json = serde_json::to_string_pretty(configs)
-        .map_err(|e| format!("serialize error: {e}"))?;
+    let json =
+        serde_json::to_string_pretty(configs).map_err(|e| format!("serialize error: {e}"))?;
     std::fs::write(state_path(), json).map_err(|e| format!("write error: {e}"))?;
     info!(count = configs.len(), "state saved");
     Ok(())

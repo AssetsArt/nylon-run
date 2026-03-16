@@ -42,8 +42,8 @@ nyrun reload <name>                               # graceful reload (zero-downti
 nyrun update <name> [--p ...] [--ssl ...] [...]   # update process config without removing
 nyrun logs <name>                                 # tail logs for a process
 nyrun logs <name> --lines 100                    # last N lines
-nyrun backup -o output_name                      # zip entire /tmp/nyrun/ as backup
-nyrun restore backup.zip                         # restore by extracting zip over /tmp/nyrun/
+nyrun backup -o output_name                      # zip entire /var/run/nyrun/ as backup
+nyrun restore backup.zip                         # restore by extracting zip over /var/run/nyrun/
 nyrun save                                        # save current process list for restore on reboot
 nyrun startup                                     # generate systemd unit + enable auto-start on boot
 nyrun unstartup                                   # remove systemd unit
@@ -62,7 +62,7 @@ nyrun unlink                                      # disconnect from cloud UI
     - `--p PORT` — single port, listen only (e.g. SPA static serving)
   - `--spa` — serve a directory as a single-page application (fallback to index.html)
   - `--ssl CERT_PATH KEY_PATH` — enable TLS with manual certs
-  - `--acme EMAIL` — auto SSL via Let's Encrypt ACME (HTTP-01 challenge), certs stored in `/tmp/nyrun/certs/`
+  - `--acme EMAIL` — auto SSL via Let's Encrypt ACME (HTTP-01 challenge), certs stored in `/var/run/nyrun/certs/`
   - `--env-file PATH` — load environment variables from a dotenv file, passed to the spawned process
   - `--deny CAPS` — sandbox the process using eBPF (Linux only). Comma-separated capabilities to deny:
     - `net` — block network access (outbound/inbound)
@@ -70,11 +70,11 @@ nyrun unlink                                      # disconnect from cloud UI
   - `--allow PATHS` — whitelist comma-separated directories when using `--deny io` (e.g. `--allow /tmp/data,/var/log`)
   - `--args "ARGS"` — pass arguments to the spawned binary (quoted string)
   - Accepts local paths (binary or directory) or OCI image references (e.g. `ghcr.io/org/image:tag`)
-- `backup` / `restore` — zip/unzip the entire `/tmp/nyrun/` working directory
+- `backup` / `restore` — zip/unzip the entire `/var/run/nyrun/` working directory
 
 ### Working Directory
 
-All runtime data (extracted binaries, OCI layers, state, logs) lives under `/tmp/nyrun/`. Backup/restore operates on this directory as a whole — zip it out, zip it back in.
+All runtime data (extracted binaries, OCI layers, state, logs) lives under `/var/run/nyrun/`. Backup/restore operates on this directory as a whole — zip it out, zip it back in.
 
 ## Architecture Overview
 
@@ -82,7 +82,7 @@ All runtime data (extracted binaries, OCI layers, state, logs) lives under `/tmp
 
 1. **Daemon** — nyrun runs as a background daemon process (auto-starts on first command)
    - Daemon spawns automatically when any command is issued (no explicit start)
-   - PID file at `/tmp/nyrun/nyrun.pid`
+   - PID file at `/var/run/nyrun/nyrun.pid`
    - `nyrun save` — snapshot current process list to disk for restore on reboot
    - `nyrun startup` — generate + enable systemd unit (Linux) so daemon + saved processes auto-restore on boot
    - `nyrun unstartup` — remove systemd unit
@@ -109,7 +109,7 @@ All runtime data (extracted binaries, OCI layers, state, logs) lives under `/tmp
      - Uses Pingora's `TlsAccept` callback with OpenSSL
    - **Auto SSL (ACME)** — automatic Let's Encrypt certificates
      - HTTP-01 challenge: nyrun handles `/.well-known/acme-challenge/` on port 80 automatically
-     - Certs auto-issued on first request, stored in `/tmp/nyrun/certs/`
+     - Certs auto-issued on first request, stored in `/var/run/nyrun/certs/`
      - Auto-renewal before expiry
      - Only requires `--acme user@email.com` — host derived from `--p HOST:PORT:APP_PORT`
    - **In-memory caching (moka):**
@@ -120,19 +120,19 @@ All runtime data (extracted binaries, OCI layers, state, logs) lives under `/tmp
      - Async cache save via spawned tokio task
      - `X-Cache: HIT` header on cache hits
 
-4. **Persistent State (SlateDB)** — embedded KV store under `/tmp/nyrun/`
+4. **Persistent State (SlateDB)** — embedded KV store under `/var/run/nyrun/`
    - Stores process definitions and runtime state
    - Survives restarts — processes auto-recover on nyrun startup
 
-5. **OCI Puller** — pull images from OCI registries, extract to `/tmp/nyrun/oci/<name>/`, run natively (no containers)
-   - **Isolated by default:** OCI processes are sandboxed to their own folder (`/tmp/nyrun/oci/<name>/`) via eBPF on Linux — no `--deny io` needed
+5. **OCI Puller** — pull images from OCI registries, extract to `/var/run/nyrun/oci/<name>/`, run natively (no containers)
+   - **Isolated by default:** OCI processes are sandboxed to their own folder (`/var/run/nyrun/oci/<name>/`) via eBPF on Linux — no `--deny io` needed
    - `--allow PATHS` to whitelist additional directories, `--allow all` to disable isolation entirely
    - Behaves like a lightweight container without the runtime overhead
 
-6. **Backup/Restore** — zip the entire `/tmp/nyrun/` directory; restore by overwriting it
+6. **Backup/Restore** — zip the entire `/var/run/nyrun/` directory; restore by overwriting it
 
 7. **Logging** — per-process log capture and retrieval
-   - stdout/stderr captured to log files under `/tmp/nyrun/logs/`
+   - stdout/stderr captured to log files under `/var/run/nyrun/logs/`
    - `nyrun logs <name>` to tail, `--lines N` for last N lines
    - Log rotation to prevent unbounded growth
 
@@ -157,7 +157,7 @@ All runtime data (extracted binaries, OCI layers, state, logs) lives under `/tmp
 - **Pingora** for proxy — battle-tested at Cloudflare, async, high performance
 - **SlateDB** for persistence — embedded LSM-tree KV, no external DB
 - **moka** for in-memory caching — async-ready, TTL-based eviction
-- **`/tmp/nyrun/`** as the single working directory — simple backup/restore model
+- **`/var/run/nyrun/`** as the single working directory — simple backup/restore model
 - **OCI for distribution only** — pull and extract, execute natively on host
 
 ### Caching

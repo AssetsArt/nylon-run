@@ -114,7 +114,7 @@ pub enum Command {
     Unstartup,
     /// Stop daemon and all managed processes
     Kill,
-    /// Zip /tmp/nyrun/ as backup
+    /// Zip /var/run/nyrun/ as backup
     Backup {
         /// Output filename
         #[arg(short, long)]

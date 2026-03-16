@@ -7,12 +7,15 @@ use pingora::upstreams::peer::HttpPeer;
 use pingora_core::server::Server;
 use pingora_core::server::configuration::ServerConf;
 use pingora_proxy::{ProxyHttp, Session, http_proxy_service};
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
+
+use crate::tls::DynamicCertStore;
 
 // --- Route types ---
 
@@ -388,6 +391,8 @@ pub struct ProxyManager {
     routes: Arc<RwLock<RouteTable>>,
     cache: Cache<String, (ResponseHeader, Bytes)>,
     ports: Vec<u16>,
+    tls_ports: HashSet<u16>,
+    cert_store: Arc<DynamicCertStore>,
 }
 
 impl ProxyManager {
@@ -401,6 +406,8 @@ impl ProxyManager {
             routes: Arc::new(RwLock::new(RouteTable::default())),
             cache,
             ports: Vec::new(),
+            tls_ports: HashSet::new(),
+            cert_store: Arc::new(DynamicCertStore::new()),
         }
     }
 
@@ -411,6 +418,18 @@ impl ProxyManager {
         host: Option<String>,
         backend: Backend,
     ) -> Result<(), String> {
+        self.add_route_with_tls(name, port, host, backend, None)
+            .await
+    }
+
+    pub async fn add_route_with_tls(
+        &mut self,
+        name: &str,
+        port: u16,
+        host: Option<String>,
+        backend: Backend,
+        ssl: Option<(String, String)>, // (cert_path, key_path)
+    ) -> Result<(), String> {
         {
             let mut table = self.routes.write().await;
             table.entries.retain(|r| r.name != name);
@@ -420,6 +439,15 @@ impl ProxyManager {
                 host: host.clone(),
                 backend: backend.clone(),
             });
+        }
+
+        // Handle TLS cert
+        if let Some((cert_path, key_path)) = &ssl {
+            let sni_host = host.as_deref().unwrap_or("default");
+            self.cert_store
+                .add_cert(sni_host, cert_path, key_path)
+                .await?;
+            self.tls_ports.insert(port);
         }
 
         let need_new_listener = !self.ports.contains(&port);
@@ -434,8 +462,10 @@ impl ProxyManager {
             let routes = Arc::clone(&self.routes);
             let cache = self.cache.clone();
             let ports = self.ports.clone();
+            let tls_ports = self.tls_ports.clone();
+            let cert_store = Arc::clone(&self.cert_store);
             std::thread::spawn(move || {
-                start_pingora_server(ports, routes, cache);
+                start_pingora_server(ports, tls_ports, routes, cache, cert_store);
             });
         }
 
@@ -444,6 +474,7 @@ impl ProxyManager {
             port,
             host = ?host,
             backend = ?backend,
+            tls = ssl.is_some(),
             "route added"
         );
         Ok(())
@@ -458,8 +489,10 @@ impl ProxyManager {
 
 fn start_pingora_server(
     ports: Vec<u16>,
+    tls_ports: HashSet<u16>,
     routes: Arc<RwLock<RouteTable>>,
     cache: Cache<String, (ResponseHeader, Bytes)>,
+    cert_store: Arc<DynamicCertStore>,
 ) {
     let mut server = match Server::new(None) {
         Ok(s) => s,
@@ -485,12 +518,27 @@ fn start_pingora_server(
 
     let proxy = NyrunProxy { routes, cache };
     let mut service = http_proxy_service(&server.configuration, proxy);
+
     for port in &ports {
-        service.add_tcp(&format!("0.0.0.0:{}", port));
+        let addr = format!("0.0.0.0:{}", port);
+        if tls_ports.contains(port) {
+            match cert_store.to_tls_settings() {
+                Ok(settings) => {
+                    service.add_tls_with_settings(&addr, None, settings);
+                    info!(port, "TLS listener added");
+                }
+                Err(e) => {
+                    error!(port, error = %e, "failed to create TLS settings, falling back to TCP");
+                    service.add_tcp(&addr);
+                }
+            }
+        } else {
+            service.add_tcp(&addr);
+        }
     }
 
     server.add_service(service);
 
-    info!(ports = ?ports, "pingora proxy started");
+    info!(ports = ?ports, tls_ports = ?tls_ports, "pingora proxy started");
     server.run_forever();
 }

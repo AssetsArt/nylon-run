@@ -6,10 +6,11 @@ mod protocol;
 mod proxy;
 mod server;
 mod state;
+mod tls;
 
 use clap::Parser;
 use cli::{Cli, Command};
-use protocol::{ProcessConfig, ProcessMode, PortMapping, Request, SslConfig};
+use protocol::{PortMapping, ProcessConfig, ProcessMode, Request, SslConfig};
 use std::collections::HashMap;
 
 #[global_allocator]
@@ -26,7 +27,11 @@ fn parse_env_file(path: &str) -> Result<HashMap<String, String>, String> {
         }
         if let Some((key, value)) = line.split_once('=') {
             let key = key.trim().to_string();
-            let value = value.trim().trim_matches('"').trim_matches('\'').to_string();
+            let value = value
+                .trim()
+                .trim_matches('"')
+                .trim_matches('\'')
+                .to_string();
             vars.insert(key, value);
         }
     }
@@ -58,7 +63,9 @@ fn parse_port_mapping(port: &str) -> Result<PortMapping, String> {
     let parts: Vec<&str> = port.split(':').collect();
     match parts.len() {
         1 => {
-            let p: u16 = parts[0].parse().map_err(|_| format!("invalid port: {}", parts[0]))?;
+            let p: u16 = parts[0]
+                .parse()
+                .map_err(|_| format!("invalid port: {}", parts[0]))?;
             Ok(PortMapping {
                 host: None,
                 public_port: p,
@@ -66,8 +73,12 @@ fn parse_port_mapping(port: &str) -> Result<PortMapping, String> {
             })
         }
         2 => {
-            let public: u16 = parts[0].parse().map_err(|_| format!("invalid port: {}", parts[0]))?;
-            let app: u16 = parts[1].parse().map_err(|_| format!("invalid port: {}", parts[1]))?;
+            let public: u16 = parts[0]
+                .parse()
+                .map_err(|_| format!("invalid port: {}", parts[0]))?;
+            let app: u16 = parts[1]
+                .parse()
+                .map_err(|_| format!("invalid port: {}", parts[1]))?;
             Ok(PortMapping {
                 host: None,
                 public_port: public,
@@ -76,8 +87,12 @@ fn parse_port_mapping(port: &str) -> Result<PortMapping, String> {
         }
         3 => {
             let host = parts[0].to_string();
-            let public: u16 = parts[1].parse().map_err(|_| format!("invalid port: {}", parts[1]))?;
-            let app: u16 = parts[2].parse().map_err(|_| format!("invalid port: {}", parts[2]))?;
+            let public: u16 = parts[1]
+                .parse()
+                .map_err(|_| format!("invalid port: {}", parts[1]))?;
+            let app: u16 = parts[2]
+                .parse()
+                .map_err(|_| format!("invalid port: {}", parts[2]))?;
             Ok(PortMapping {
                 host: Some(host),
                 public_port: public,
@@ -258,27 +273,31 @@ async fn main() {
             println!("daemon stopped");
         }
 
-        Command::Startup => {
-            match generate_systemd_unit() {
-                Ok(()) => println!("systemd unit installed and enabled"),
-                Err(e) => eprintln!("error: {e}"),
+        Command::Startup => match generate_systemd_unit() {
+            Ok(()) => println!("systemd unit installed and enabled"),
+            Err(e) => eprintln!("error: {e}"),
+        },
+
+        Command::Unstartup => match remove_systemd_unit() {
+            Ok(()) => println!("systemd unit removed"),
+            Err(e) => eprintln!("error: {e}"),
+        },
+
+        Command::Backup { o } => match create_backup(&o) {
+            Ok(path) => println!("backup saved to {path}"),
+            Err(e) => {
+                eprintln!("error: {e}");
+                std::process::exit(1);
             }
-        }
+        },
 
-        Command::Unstartup => {
-            match remove_systemd_unit() {
-                Ok(()) => println!("systemd unit removed"),
-                Err(e) => eprintln!("error: {e}"),
+        Command::Restore { file } => match restore_backup(&file) {
+            Ok(()) => println!("restore complete — restart daemon to apply"),
+            Err(e) => {
+                eprintln!("error: {e}");
+                std::process::exit(1);
             }
-        }
-
-        Command::Backup { o } => {
-            println!("backup not yet implemented (output: {o})");
-        }
-
-        Command::Restore { file } => {
-            println!("restore not yet implemented (file: {file})");
-        }
+        },
 
         Command::Link { api_key } => {
             println!("link not yet implemented (key: {api_key})");
@@ -288,6 +307,110 @@ async fn main() {
             println!("unlink not yet implemented");
         }
     }
+}
+
+fn create_backup(output_name: &str) -> Result<String, String> {
+    use std::io::Write;
+    use zip::ZipWriter;
+    use zip::write::FileOptions;
+
+    let nyrun_dir = std::path::Path::new("/var/run/nyrun");
+    if !nyrun_dir.exists() {
+        return Err("nyrun directory /var/run/nyrun does not exist".to_string());
+    }
+
+    let output_path = if output_name.ends_with(".zip") {
+        output_name.to_string()
+    } else {
+        format!("{output_name}.zip")
+    };
+
+    let file = std::fs::File::create(&output_path)
+        .map_err(|e| format!("failed to create {output_path}: {e}"))?;
+    let mut zip = ZipWriter::new(file);
+    let options = FileOptions::<()>::default().compression_method(zip::CompressionMethod::Deflated);
+
+    fn walk_dir(
+        zip: &mut ZipWriter<std::fs::File>,
+        base: &std::path::Path,
+        current: &std::path::Path,
+        options: FileOptions<()>,
+    ) -> Result<(), String> {
+        for entry in std::fs::read_dir(current).map_err(|e| format!("failed to read dir: {e}"))? {
+            let entry = entry.map_err(|e| format!("dir entry error: {e}"))?;
+            let path = entry.path();
+            let rel = path
+                .strip_prefix(base)
+                .map_err(|e| format!("strip prefix error: {e}"))?;
+
+            if path.is_dir() {
+                // Skip socket files directory entries that might cause issues
+                let name = format!("{}/", rel.display());
+                zip.add_directory(&name, options)
+                    .map_err(|e| format!("zip add dir error: {e}"))?;
+                walk_dir(zip, base, &path, options)?;
+            } else {
+                // Skip socket files
+                let fname = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+                if fname.ends_with(".sock") || fname.ends_with(".pid") {
+                    continue;
+                }
+                let name = rel.display().to_string();
+                zip.start_file(&name, options)
+                    .map_err(|e| format!("zip start file error: {e}"))?;
+                let content = std::fs::read(&path)
+                    .map_err(|e| format!("read file error {}: {e}", path.display()))?;
+                zip.write_all(&content)
+                    .map_err(|e| format!("zip write error: {e}"))?;
+            }
+        }
+        Ok(())
+    }
+
+    walk_dir(&mut zip, nyrun_dir, nyrun_dir, options)?;
+    zip.finish().map_err(|e| format!("zip finish error: {e}"))?;
+
+    Ok(output_path)
+}
+
+fn restore_backup(file: &str) -> Result<(), String> {
+    use std::io::Read;
+
+    let zip_file = std::fs::File::open(file).map_err(|e| format!("failed to open {file}: {e}"))?;
+    let mut archive =
+        zip::ZipArchive::new(zip_file).map_err(|e| format!("invalid zip file: {e}"))?;
+
+    let nyrun_dir = std::path::Path::new("/var/run/nyrun");
+    std::fs::create_dir_all(nyrun_dir)
+        .map_err(|e| format!("failed to create /var/run/nyrun: {e}"))?;
+
+    for i in 0..archive.len() {
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| format!("zip entry error: {e}"))?;
+
+        let out_path = nyrun_dir.join(entry.name());
+
+        // Security: prevent path traversal
+        if !out_path.starts_with(nyrun_dir) {
+            return Err(format!("path traversal detected in zip: {}", entry.name()));
+        }
+
+        if entry.is_dir() {
+            std::fs::create_dir_all(&out_path).map_err(|e| format!("mkdir error: {e}"))?;
+        } else {
+            if let Some(parent) = out_path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| format!("mkdir error: {e}"))?;
+            }
+            let mut content = Vec::new();
+            entry
+                .read_to_end(&mut content)
+                .map_err(|e| format!("read zip entry error: {e}"))?;
+            std::fs::write(&out_path, &content).map_err(|e| format!("write file error: {e}"))?;
+        }
+    }
+
+    Ok(())
 }
 
 fn generate_systemd_unit() -> Result<(), String> {
@@ -304,7 +427,7 @@ After=network.target
 [Service]
 Type=forking
 ExecStart={exe} daemon
-PIDFile=/tmp/nyrun/nyrun.pid
+PIDFile=/var/run/nyrun/nyrun.pid
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
@@ -338,8 +461,7 @@ fn remove_systemd_unit() -> Result<(), String> {
         .map_err(|e| format!("systemctl disable failed: {e}"))?;
 
     let unit_path = "/etc/systemd/system/nyrun.service";
-    std::fs::remove_file(unit_path)
-        .map_err(|e| format!("failed to remove {unit_path}: {e}"))?;
+    std::fs::remove_file(unit_path).map_err(|e| format!("failed to remove {unit_path}: {e}"))?;
 
     std::process::Command::new("systemctl")
         .args(["daemon-reload"])

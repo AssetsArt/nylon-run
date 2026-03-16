@@ -7,9 +7,9 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::info;
 
-const NYRUN_DIR: &str = "/tmp/nyrun";
-const PID_PATH: &str = "/tmp/nyrun/nyrun.pid";
-const SOCK_PATH: &str = "/tmp/nyrun/nyrun.sock";
+const NYRUN_DIR: &str = "/var/run/nyrun";
+const PID_PATH: &str = "/var/run/nyrun/nyrun.pid";
+const SOCK_PATH: &str = "/var/run/nyrun/nyrun.sock";
 
 pub fn ensure_dirs() {
     let dirs = ["", "logs", "certs", "oci", "state"];

@@ -1,7 +1,7 @@
 use crate::protocol::{self, ProcessInfo, Request, Response};
 use tokio::net::UnixStream;
 
-const SOCK_PATH: &str = "/tmp/nyrun/nyrun.sock";
+const SOCK_PATH: &str = "/var/run/nyrun/nyrun.sock";
 
 async fn send_request(request: Request) -> Result<Response, String> {
     crate::daemon::ensure_daemon()?;
@@ -44,17 +44,29 @@ fn print_process_list(procs: &[ProcessInfo]) {
         let pid = p.pid.map(|p| p.to_string()).unwrap_or_else(|| "-".into());
         let status = format!("{:?}", p.status);
         let mode = format!("{:?}", p.mode);
-        let port = p.port_mapping.as_ref().map(|pm| {
-            if let Some(ref host) = pm.host {
-                format!("{}:{}:{}", host, pm.public_port, pm.app_port.unwrap_or(pm.public_port))
-            } else if let Some(app) = pm.app_port {
-                format!("{}:{}", pm.public_port, app)
-            } else {
-                pm.public_port.to_string()
-            }
-        }).unwrap_or_else(|| "-".into());
+        let port = p
+            .port_mapping
+            .as_ref()
+            .map(|pm| {
+                if let Some(ref host) = pm.host {
+                    format!(
+                        "{}:{}:{}",
+                        host,
+                        pm.public_port,
+                        pm.app_port.unwrap_or(pm.public_port)
+                    )
+                } else if let Some(app) = pm.app_port {
+                    format!("{}:{}", pm.public_port, app)
+                } else {
+                    pm.public_port.to_string()
+                }
+            })
+            .unwrap_or_else(|| "-".into());
 
-        let uptime = p.uptime_secs.map(format_uptime).unwrap_or_else(|| "-".into());
+        let uptime = p
+            .uptime_secs
+            .map(format_uptime)
+            .unwrap_or_else(|| "-".into());
 
         println!(
             "{:<20} {:<8} {:<10} {:<8} {:<15} {:<10}",

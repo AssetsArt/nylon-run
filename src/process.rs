@@ -1,4 +1,4 @@
-use crate::protocol::{ProcessConfig, ProcessInfo, ProcessStatus};
+use crate::protocol::{PortMapping, ProcessConfig, ProcessInfo, ProcessStatus, SslConfig};
 use chrono::Utc;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -7,7 +7,9 @@ use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
-const NYRUN_DIR: &str = "/tmp/nyrun";
+const NYRUN_DIR: &str = "/var/run/nyrun";
+const LOG_MAX_SIZE: u64 = 10 * 1024 * 1024; // 10MB
+const LOG_MAX_ROTATED: usize = 5;
 
 struct ManagedProcess {
     config: ProcessConfig,
@@ -69,7 +71,9 @@ impl ProcessManager {
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
-        let mut child = cmd.spawn().map_err(|e| format!("failed to spawn '{}': {e}", config.path))?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("failed to spawn '{}': {e}", config.path))?;
         let pid = child.id();
 
         // Spawn log capture tasks
@@ -122,9 +126,9 @@ impl ProcessManager {
         self.processes
             .values()
             .map(|p| {
-                let uptime = p.started_at.map(|s| {
-                    Utc::now().signed_duration_since(s).num_seconds().max(0) as u64
-                });
+                let uptime = p
+                    .started_at
+                    .map(|s| Utc::now().signed_duration_since(s).num_seconds().max(0) as u64);
                 ProcessInfo {
                     name: p.config.name.clone(),
                     pid: p.pid,
@@ -246,6 +250,61 @@ impl ProcessManager {
         }
     }
 
+    /// Update a process config in-place. Returns the old config for diffing.
+    pub fn update_config(
+        &mut self,
+        name: &str,
+        port_mapping: Option<PortMapping>,
+        ssl: Option<SslConfig>,
+        acme: Option<String>,
+        env_file: Option<String>,
+        env_vars: Option<HashMap<String, String>>,
+        args: Option<Vec<String>>,
+    ) -> Result<ProcessConfig, String> {
+        let proc = self
+            .processes
+            .get_mut(name)
+            .ok_or_else(|| format!("process '{}' not found", name))?;
+
+        let old_config = proc.config.clone();
+
+        if let Some(pm) = port_mapping {
+            proc.config.port_mapping = Some(pm);
+        }
+        if let Some(s) = ssl {
+            proc.config.ssl = Some(s);
+        }
+        if let Some(a) = acme {
+            proc.config.acme = Some(a);
+        }
+        if let Some(ef) = &env_file {
+            proc.config.env_file = Some(ef.clone());
+        }
+        if let Some(ev) = env_vars {
+            proc.config.env_vars = ev;
+        }
+        if let Some(a) = args {
+            proc.config.args = a;
+        }
+
+        Ok(old_config)
+    }
+
+    /// Rotate logs for all processes if they exceed the size limit
+    pub fn rotate_logs(&self) {
+        for name in self.processes.keys() {
+            let log_dir = Self::logs_dir(name);
+            for log_name in &["stdout.log", "stderr.log"] {
+                let log_path = log_dir.join(log_name);
+                if let Ok(meta) = std::fs::metadata(&log_path) {
+                    if meta.len() > LOG_MAX_SIZE {
+                        rotate_log_file(&log_path);
+                    }
+                }
+            }
+        }
+    }
+
     /// Check for crashed processes and auto-restart them
     pub async fn check_and_restart(&mut self) {
         let mut to_restart = Vec::new();
@@ -279,6 +338,28 @@ impl ProcessManager {
             }
         }
     }
+}
+
+fn rotate_log_file(path: &PathBuf) {
+    // Remove oldest rotated file
+    let oldest = format!("{}.{}", path.display(), LOG_MAX_ROTATED);
+    let _ = std::fs::remove_file(&oldest);
+
+    // Shift existing rotated files: .4 -> .5, .3 -> .4, etc.
+    for i in (1..LOG_MAX_ROTATED).rev() {
+        let from = format!("{}.{}", path.display(), i);
+        let to = format!("{}.{}", path.display(), i + 1);
+        let _ = std::fs::rename(&from, &to);
+    }
+
+    // Move current log to .1
+    let rotated = format!("{}.1", path.display());
+    let _ = std::fs::rename(path, &rotated);
+
+    // Create fresh empty log file
+    let _ = std::fs::File::create(path);
+
+    info!(path = %path.display(), "log rotated");
 }
 
 async fn kill_child(proc: &mut ManagedProcess) {

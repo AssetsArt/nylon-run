@@ -3,11 +3,11 @@
 ## Core Infrastructure
 - [x] Project setup (Cargo.toml dependencies, module structure)
 - [x] CLI parsing with clap (`bin`, `run`, `ls`, `del`, `restart`, `reload`, `update`, `logs`, `save`, `startup`, `unstartup`, `kill`, `backup`, `restore`, `link`, `unlink`)
-- [ ] SlateDB persistent state (`/tmp/nyrun/state/`) — currently using JSON file
-- [x] Working directory setup (`/tmp/nyrun/`)
+- [ ] SlateDB persistent state (`/var/run/nyrun/state/`) — currently using JSON file
+- [x] Working directory setup (`/var/run/nyrun/`)
 
 ## Daemon
-- [x] Auto-start daemon on first command, PID file at `/tmp/nyrun/nyrun.pid`
+- [x] Auto-start daemon on first command, PID file at `/var/run/nyrun/nyrun.pid`
 - [x] CLI ↔ daemon communication (Unix socket)
 - [x] `nyrun save` — snapshot current process list for restore on reboot
 - [x] `nyrun startup` — generate + enable systemd unit (Linux)
@@ -25,7 +25,7 @@
 - [x] `nyrun del <name>` — stop and remove
 - [x] `nyrun restart <name>`
 - [x] `nyrun reload <name>`
-- [ ] `nyrun update <name>` — update config without removing
+- [x] `nyrun update <name>` — update config without removing
 - [x] State persistence — auto-recover processes on nyrun startup
 
 ## Reverse Proxy (Pingora)
@@ -41,15 +41,15 @@
 - [x] Path traversal protection
 
 ## TLS/SSL
-- [ ] `--ssl CERT_PATH KEY_PATH` — manual certs
-- [ ] SNI-based dynamic certificate selection (DynamicCertificate + TlsAccept)
-- [ ] Multiple certs per listener
-- [ ] Default cert fallback
+- [x] `--ssl CERT_PATH KEY_PATH` — manual certs
+- [x] SNI-based dynamic certificate selection (DynamicCertStore + TlsAccept)
+- [x] Multiple certs per listener (via shared DynamicCertStore)
+- [x] Default cert fallback
 
 ## Auto SSL (ACME)
 - [ ] `--acme EMAIL` — Let's Encrypt integration
 - [ ] HTTP-01 challenge handler (`/.well-known/acme-challenge/`)
-- [ ] Cert storage (`/tmp/nyrun/certs/`)
+- [ ] Cert storage (`/var/run/nyrun/certs/`)
 - [ ] Auto-renewal before expiry
 - [ ] Host derived from `--p HOST:PORT:APP_PORT`
 
@@ -63,7 +63,7 @@
 
 ## OCI Support
 - [ ] Pull images from OCI registries (ghcr.io, etc.)
-- [ ] Extract layers to `/tmp/nyrun/oci/<name>/`
+- [ ] Extract layers to `/var/run/nyrun/oci/<name>/`
 - [ ] Execute extracted binaries natively
 - [ ] Isolated by default (eBPF sandbox to own folder on Linux)
 - [ ] `--allow PATHS` — whitelist additional directories
@@ -76,10 +76,10 @@
 - [ ] Per-process enforcement, no container overhead
 
 ## Logging
-- [x] stdout/stderr capture to `/tmp/nyrun/logs/`
+- [x] stdout/stderr capture to `/var/run/nyrun/logs/`
 - [x] `nyrun logs <name>` — tail logs
 - [x] `nyrun logs <name> --lines N` — last N lines
-- [ ] Log rotation
+- [x] Log rotation (10MB max, 5 rotated files, checked every ~60s)
 
 ## Observability (Prometheus)
 - [ ] `/metrics` endpoint on dedicated port
@@ -89,8 +89,8 @@
 - [ ] System metrics: total managed processes, OCI pull stats
 
 ## Backup/Restore
-- [ ] `nyrun backup -o <name>` — zip `/tmp/nyrun/`
-- [ ] `nyrun restore <file.zip>` — extract zip over `/tmp/nyrun/`
+- [x] `nyrun backup -o <name>` — zip `/var/run/nyrun/`
+- [x] `nyrun restore <file.zip>` — extract zip over `/var/run/nyrun/`
 
 ## Cloud Agent (nyrun side only — cloud UI is a separate private project)
 - [ ] `nyrun link <api-key>` — connect to cloud

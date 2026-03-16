@@ -111,7 +111,8 @@ pub async fn write_message<W: AsyncWriteExt + Unpin, T: Serialize>(
     writer: &mut W,
     msg: &T,
 ) -> std::io::Result<()> {
-    let data = serde_json::to_vec(msg).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let data =
+        serde_json::to_vec(msg).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
     let len = data.len() as u32;
     writer.write_all(&len.to_be_bytes()).await?;
     writer.write_all(&data).await?;
