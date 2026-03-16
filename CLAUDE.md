@@ -44,6 +44,10 @@ nyrun logs <name>                                 # tail logs for a process
 nyrun logs <name> --lines 100                    # last N lines
 nyrun backup -o output_name                      # zip entire /tmp/nyrun/ as backup
 nyrun restore backup.zip                         # restore by extracting zip over /tmp/nyrun/
+nyrun save                                        # save current process list for restore on reboot
+nyrun startup                                     # generate systemd unit + enable auto-start on boot
+nyrun unstartup                                   # remove systemd unit
+nyrun kill                                        # stop daemon + all managed processes
 nyrun link <api-key>                              # connect this instance to cloud UI
 nyrun unlink                                      # disconnect from cloud UI
 ```
@@ -76,7 +80,16 @@ All runtime data (extracted binaries, OCI layers, state, logs) lives under `/tmp
 
 ### Core Components
 
-1. **Process Manager** — spawn, monitor, restart, and manage binary processes
+1. **Daemon** — nyrun runs as a background daemon process (auto-starts on first command)
+   - Daemon spawns automatically when any command is issued (no explicit start)
+   - PID file at `/tmp/nyrun/nyrun.pid`
+   - `nyrun save` — snapshot current process list to disk for restore on reboot
+   - `nyrun startup` — generate + enable systemd unit (Linux) so daemon + saved processes auto-restore on boot
+   - `nyrun unstartup` — remove systemd unit
+   - `nyrun kill` — stop daemon + all managed processes
+   - All `bin`/`run`/`ls`/`del`/etc. commands communicate with the daemon via Unix socket
+
+2. **Process Manager** — spawn, monitor, restart, and manage binary processes
    - Run arbitrary binaries with custom environment variables
    - Process lifecycle: start, stop, restart, delete
    - Auto-restart on crash
@@ -87,7 +100,7 @@ All runtime data (extracted binaries, OCI layers, state, logs) lives under `/tmp
      - `--allow` whitelists specific paths when `io` is denied (eBPF checks path prefix)
      - Enforced per-process, no container overhead
 
-2. **Reverse Proxy (Pingora)** — activated by `run` subcommand with `--p`
+3. **Reverse Proxy (Pingora)** — activated by `run` subcommand with `--p`
    - Port mapping: route `HOST_PORT` → `APP_PORT` on the managed process
    - SPA static file serving with `--spa` flag (fallback to index.html)
    - **TLS/SSL** with SNI-based dynamic certificate selection (same pattern as nylon-mesh)
@@ -106,23 +119,23 @@ All runtime data (extracted binaries, OCI layers, state, logs) lives under `/tmp
      - Encoding-aware: caches gzip/br/zstd/deflate variants separately
      - Bypass: non-GET requests, configurable path prefixes, file extensions
 
-3. **Persistent State (SlateDB)** — embedded KV store under `/tmp/nyrun/`
+4. **Persistent State (SlateDB)** — embedded KV store under `/tmp/nyrun/`
    - Stores process definitions and runtime state
    - Survives restarts — processes auto-recover on nyrun startup
 
-4. **OCI Puller** — pull images from OCI registries, extract to `/tmp/nyrun/oci/<name>/`, run natively (no containers)
+5. **OCI Puller** — pull images from OCI registries, extract to `/tmp/nyrun/oci/<name>/`, run natively (no containers)
    - **Isolated by default:** OCI processes are sandboxed to their own folder (`/tmp/nyrun/oci/<name>/`) via eBPF on Linux — no `--deny io` needed
    - `--allow PATHS` to whitelist additional directories, `--allow all` to disable isolation entirely
    - Behaves like a lightweight container without the runtime overhead
 
-5. **Backup/Restore** — zip the entire `/tmp/nyrun/` directory; restore by overwriting it
+6. **Backup/Restore** — zip the entire `/tmp/nyrun/` directory; restore by overwriting it
 
-6. **Logging** — per-process log capture and retrieval
+7. **Logging** — per-process log capture and retrieval
    - stdout/stderr captured to log files under `/tmp/nyrun/logs/`
    - `nyrun logs <name>` to tail, `--lines N` for last N lines
    - Log rotation to prevent unbounded growth
 
-7. **Observability (Prometheus + Grafana)**
+8. **Observability (Prometheus + Grafana)**
    - Built-in Prometheus metrics endpoint (e.g. `/metrics` on a dedicated port)
    - **Process metrics:** uptime, restart count, CPU/memory usage per process
    - **Proxy metrics:** request count, latency histograms, status code distribution, active connections
@@ -130,7 +143,7 @@ All runtime data (extracted binaries, OCI layers, state, logs) lives under `/tmp
    - **System metrics:** total managed processes, OCI pull stats
    - Ready for Grafana dashboards out of the box
 
-8. **Cloud Agent** (cloud UI/server is a separate private project — not in this repo)
+9. **Cloud Agent** (cloud UI/server is a separate private project — not in this repo)
    - `nyrun link <api-key>` / `nyrun unlink` — connect/disconnect to cloud
    - Agent pushes metrics, logs, and status to cloud via WebSocket/gRPC
    - Persistent outbound connection — no inbound ports needed on the agent side

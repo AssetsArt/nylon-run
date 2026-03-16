@@ -2,9 +2,17 @@
 
 ## Core Infrastructure
 - [ ] Project setup (Cargo.toml dependencies, module structure)
-- [ ] CLI parsing with clap (`bin`, `run`, `ls`, `del`, `restart`, `reload`, `update`, `logs`, `backup`, `restore`, `link`, `unlink`)
+- [ ] CLI parsing with clap (`bin`, `run`, `ls`, `del`, `restart`, `reload`, `update`, `logs`, `save`, `startup`, `unstartup`, `kill`, `backup`, `restore`, `link`, `unlink`)
 - [ ] SlateDB persistent state (`/tmp/nyrun/state/`)
 - [ ] Working directory setup (`/tmp/nyrun/`)
+
+## Daemon
+- [ ] Auto-start daemon on first command, PID file at `/tmp/nyrun/nyrun.pid`
+- [ ] CLI ↔ daemon communication (Unix socket)
+- [ ] `nyrun save` — snapshot current process list for restore on reboot
+- [ ] `nyrun startup` — generate + enable systemd unit (Linux)
+- [ ] `nyrun unstartup` — remove systemd unit
+- [ ] `nyrun kill` — stop daemon + all managed processes
 
 ## Process Manager
 - [ ] Spawn binary processes with custom env vars
