@@ -29,14 +29,16 @@
 - [x] State persistence — auto-recover processes on nyrun startup
 
 ## Reverse Proxy (Pingora)
-- [ ] Basic proxy: `--p PUBLIC_PORT:APP_PORT`
-- [ ] Host-based routing: `--p HOST:PUBLIC_PORT:APP_PORT`
-- [ ] Single port listen: `--p PORT`
-- [ ] Multiple services sharing same public port via different hosts
+- [x] Basic proxy: `--p PUBLIC_PORT:APP_PORT`
+- [x] Host-based routing: `--p HOST:PUBLIC_PORT:APP_PORT`
+- [x] Single port listen: `--p PORT`
+- [x] Multiple services sharing same public port via different hosts
 
 ## SPA Static File Serving
-- [ ] `--spa` flag — serve directory as SPA
-- [ ] Fallback to index.html for non-file routes
+- [x] `--spa` flag — serve directory as SPA
+- [x] Fallback to index.html for non-file routes
+- [x] Content-type detection by file extension
+- [x] Path traversal protection
 
 ## TLS/SSL
 - [ ] `--ssl CERT_PATH KEY_PATH` — manual certs
@@ -51,14 +53,13 @@
 - [ ] Auto-renewal before expiry
 - [ ] Host derived from `--p HOST:PORT:APP_PORT`
 
-## Two-Tier Caching
-- [ ] Tier 1: moka in-memory cache (configurable capacity + TTL)
-- [ ] Tier 2: Redis distributed cache (HSET storage, JSON-serialized headers)
-- [ ] Cache key: `{host}{uri}{query}:{encoding}`
-- [ ] Encoding-aware (gzip/br/zstd/deflate variants)
-- [ ] Bypass rules (non-GET, path prefixes, file extensions)
-- [ ] Async cache save (spawned tokio task)
-- [ ] Smart encoding selection (hit frequency tracking)
+## In-Memory Caching (moka)
+- [x] Tier 1: moka in-memory cache (10,000 entries, 60s TTL)
+- [x] Cache key: `{host}{uri}{query}`
+- [x] Bypass non-GET requests
+- [x] Async cache save (spawned tokio task)
+- [x] 5MB max body size per entry (OOM protection)
+- [x] `X-Cache: HIT` header on cache hits
 
 ## OCI Support
 - [ ] Pull images from OCI registries (ghcr.io, etc.)
@@ -84,7 +85,7 @@
 - [ ] `/metrics` endpoint on dedicated port
 - [ ] Process metrics: uptime, restart count, CPU/memory per process
 - [ ] Proxy metrics: request count, latency histograms, status codes, active connections
-- [ ] Cache metrics: hit/miss ratio (T1/T2), cache size, eviction count
+- [ ] Cache metrics: hit/miss ratio, cache size, eviction count
 - [ ] System metrics: total managed processes, OCI pull stats
 
 ## Backup/Restore

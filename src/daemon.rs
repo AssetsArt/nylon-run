@@ -1,4 +1,6 @@
 use crate::process::ProcessManager;
+use crate::proxy::ProxyManager;
+use crate::server::DaemonState;
 use crate::state;
 use std::path::Path;
 use std::sync::Arc;
@@ -27,15 +29,12 @@ pub fn write_pid() {
 }
 
 pub fn is_daemon_running() -> bool {
-    // Check if socket exists and is connectable
     if !Path::new(SOCK_PATH).exists() {
         return false;
     }
-    // Try connecting synchronously
     std::os::unix::net::UnixStream::connect(SOCK_PATH).is_ok()
 }
 
-/// Spawn daemon as a detached child process
 pub fn spawn_daemon() -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| format!("cannot find own executable: {e}"))?;
 
@@ -47,7 +46,6 @@ pub fn spawn_daemon() -> Result<(), String> {
         .spawn()
         .map_err(|e| format!("failed to spawn daemon: {e}"))?;
 
-    // Wait briefly for daemon to start
     std::thread::sleep(std::time::Duration::from_millis(500));
 
     if is_daemon_running() {
@@ -57,7 +55,6 @@ pub fn spawn_daemon() -> Result<(), String> {
     }
 }
 
-/// Ensure daemon is running, spawn if needed
 pub fn ensure_daemon() -> Result<(), String> {
     if is_daemon_running() {
         return Ok(());
@@ -66,25 +63,30 @@ pub fn ensure_daemon() -> Result<(), String> {
     spawn_daemon()
 }
 
-/// Run the daemon main loop (called when invoked with hidden `daemon` subcommand)
 pub async fn run_daemon() {
     ensure_dirs();
     write_pid();
 
-    // Set up signal handler for graceful shutdown
-    let manager = Arc::new(Mutex::new(ProcessManager::new()));
+    let daemon_state = Arc::new(Mutex::new(DaemonState {
+        process_mgr: ProcessManager::new(),
+        proxy_mgr: ProxyManager::new(),
+    }));
 
     // Restore saved processes
     let saved = state::load_state();
     if !saved.is_empty() {
         info!(count = saved.len(), "restoring saved processes");
-        manager.lock().await.restore_processes(saved).await;
+        daemon_state
+            .lock()
+            .await
+            .process_mgr
+            .restore_processes(saved)
+            .await;
     }
 
     info!("daemon started (pid: {})", std::process::id());
 
-    // Run Unix socket server
-    crate::server::run_server(manager).await;
+    crate::server::run_server(daemon_state).await;
 }
 
 pub fn cleanup() {

@@ -3,6 +3,7 @@ mod client;
 mod daemon;
 mod process;
 mod protocol;
+mod proxy;
 mod server;
 mod state;
 

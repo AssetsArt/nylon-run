@@ -112,12 +112,13 @@ All runtime data (extracted binaries, OCI layers, state, logs) lives under `/tmp
      - Certs auto-issued on first request, stored in `/tmp/nyrun/certs/`
      - Auto-renewal before expiry
      - Only requires `--acme user@email.com` — host derived from `--p HOST:PORT:APP_PORT`
-   - Two-tier caching (same pattern as nylon-mesh):
-     - **Tier 1:** In-memory cache (moka) — configurable capacity & TTL
-     - **Tier 2:** Redis distributed cache — fallback on T1 miss
-     - Cache key: `{host}{uri}{query}:{encoding}`
-     - Encoding-aware: caches gzip/br/zstd/deflate variants separately
-     - Bypass: non-GET requests, configurable path prefixes, file extensions
+   - **In-memory caching (moka):**
+     - `Cache<String, (ResponseHeader, Bytes)>` — 10,000 entries, 60s TTL
+     - Cache key: `{host}{uri}{query}`
+     - Only caches GET requests with 200 OK responses
+     - 5MB max body size per entry (OOM protection)
+     - Async cache save via spawned tokio task
+     - `X-Cache: HIT` header on cache hits
 
 4. **Persistent State (SlateDB)** — embedded KV store under `/tmp/nyrun/`
    - Stores process definitions and runtime state
@@ -139,7 +140,7 @@ All runtime data (extracted binaries, OCI layers, state, logs) lives under `/tmp
    - Built-in Prometheus metrics endpoint (e.g. `/metrics` on a dedicated port)
    - **Process metrics:** uptime, restart count, CPU/memory usage per process
    - **Proxy metrics:** request count, latency histograms, status code distribution, active connections
-   - **Cache metrics:** hit/miss ratio (T1/T2), cache size, eviction count
+   - **Cache metrics:** hit/miss ratio, cache size, eviction count
    - **System metrics:** total managed processes, OCI pull stats
    - Ready for Grafana dashboards out of the box
 
@@ -159,14 +160,11 @@ All runtime data (extracted binaries, OCI layers, state, logs) lives under `/tmp
 - **`/tmp/nyrun/`** as the single working directory — simple backup/restore model
 - **OCI for distribution only** — pull and extract, execute natively on host
 
-### Caching Pattern (from nylon-mesh)
+### Caching
 
-Reference: `[nylon-mesh/src/proxy/cache.rs](https://github.com/AssetsArt/nylon-mesh/blob/main/src/proxy/cache.rs)`
-
-- Tier 1 (moka): `Cache<String, (ResponseHeader, Bytes)>`, configurable capacity + TTL
-- Tier 2 (Redis): HSET storage with JSON-serialized headers, manual expiration check
+- Tier 1 only (moka in-memory): `Cache<String, (ResponseHeader, Bytes)>`, 10,000 entries, 60s TTL
 - Cache save is async (spawned tokio task, non-blocking)
-- Smart encoding selection: tracks hit frequency per encoding, checks popular first
+- Shared cache instance across all port listeners via `Cache::clone()` (Arc internally)
 
 ### TLS Pattern (from nylon-mesh)
 
@@ -183,8 +181,7 @@ Reference: [`nylon-mesh/src/tls_accept.rs`](https://github.com/AssetsArt/nylon-m
 |-------|---------|
 | `pingora` / `pingora-proxy` | HTTP proxy framework |
 | `slatedb` | Embedded persistent KV store |
-| `moka` | Tier 1 in-memory cache |
-| `redis` | Tier 2 distributed cache |
+| `moka` | In-memory cache (Tier 1) |
 | `tokio` | Async runtime |
 | `serde` / `serde_json` | Serialization |
 | `oci-distribution` or similar | OCI image pulling |

@@ -97,6 +97,27 @@ impl ProcessManager {
         })
     }
 
+    /// Register a SPA entry (no child process, just tracked for ls/del)
+    pub async fn register_spa(&mut self, config: ProcessConfig) -> Result<String, String> {
+        if self.processes.contains_key(&config.name) {
+            return Err(format!("process '{}' already exists", config.name));
+        }
+        let name = config.name.clone();
+        self.processes.insert(
+            name.clone(),
+            ManagedProcess {
+                config,
+                child: None,
+                pid: None,
+                status: ProcessStatus::Running,
+                started_at: Some(Utc::now()),
+                restart_count: 0,
+                shutdown_tx: None,
+            },
+        );
+        Ok(format!("SPA '{}' registered", name))
+    }
+
     pub fn list(&self) -> Vec<ProcessInfo> {
         self.processes
             .values()
