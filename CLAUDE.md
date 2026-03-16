@@ -20,7 +20,9 @@ nylon-run (`nyrun`) — a Rust process manager and reverse proxy, similar to PM2
 
 ```
 nyrun bin ./xxx                                  # process management only, no proxy
+nyrun bin ./xxx --args "--port 8000 --verbose"   # pass args to the binary
 nyrun run ./xxx --p 80:8000                      # proxy (public:internal) + process management
+nyrun run ./xxx --p 80:8000 --args "--config app.yaml"  # proxy + args to binary
 nyrun run ./xxx --p domain.com:80:8000           # proxy with host-based routing on shared port
 nyrun run ./yyy --p other.com:80:9000            # multiple services sharing port 80 via different hosts
 nyrun run ./html_folder --spa --p 8080           # serve static files as SPA
@@ -62,6 +64,7 @@ nyrun unlink                                      # disconnect from cloud UI
     - `net` — block network access (outbound/inbound)
     - `io` — block filesystem I/O (read/write outside working dir)
   - `--allow PATHS` — whitelist comma-separated directories when using `--deny io` (e.g. `--allow /tmp/data,/var/log`)
+  - `--args "ARGS"` — pass arguments to the spawned binary (quoted string)
   - Accepts local paths (binary or directory) or OCI image references (e.g. `ghcr.io/org/image:tag`)
 - `backup` / `restore` — zip/unzip the entire `/tmp/nyrun/` working directory
 
