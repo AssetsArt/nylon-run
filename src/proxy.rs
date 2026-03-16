@@ -11,10 +11,11 @@ use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
+use crate::metrics::{Metrics, RequestLabels};
 use crate::tls::DynamicCertStore;
 
 // --- Route types ---
@@ -60,6 +61,7 @@ impl RouteTable {
 pub struct NyrunProxy {
     routes: Arc<RwLock<RouteTable>>,
     cache: Cache<String, (ResponseHeader, Bytes)>,
+    metrics: Option<Metrics>,
 }
 
 pub struct ProxyCtx {
@@ -67,6 +69,7 @@ pub struct ProxyCtx {
     should_cache: bool,
     response_header: Option<ResponseHeader>,
     response_body: Vec<u8>,
+    request_start: Instant,
 }
 
 /// Get the listening port from the session's socket digest
@@ -86,11 +89,15 @@ impl ProxyHttp for NyrunProxy {
     type CTX = ProxyCtx;
 
     fn new_ctx(&self) -> Self::CTX {
+        if let Some(m) = &self.metrics {
+            m.active_connections.inc();
+        }
         ProxyCtx {
             cache_key: String::new(),
             should_cache: false,
             response_header: None,
             response_body: Vec::new(),
+            request_start: Instant::now(),
         }
     }
 
@@ -140,6 +147,9 @@ impl ProxyHttp for NyrunProxy {
                 // Check cache
                 if let Some((mut header, body)) = self.cache.get(&cache_key).await {
                     debug!(key = %cache_key, "cache HIT");
+                    if let Some(m) = &self.metrics {
+                        m.record_cache_hit();
+                    }
                     let _ = header.insert_header("X-Cache", "HIT");
                     session
                         .write_response_header(Box::new(header), true)
@@ -148,6 +158,9 @@ impl ProxyHttp for NyrunProxy {
                     return Ok(true);
                 }
 
+                if let Some(m) = &self.metrics {
+                    m.record_cache_miss();
+                }
                 Ok(false)
             }
             None => {
@@ -275,6 +288,35 @@ impl ProxyHttp for NyrunProxy {
 
         Ok(None)
     }
+
+    async fn logging(
+        &self,
+        session: &mut Session,
+        _e: Option<&pingora::Error>,
+        ctx: &mut Self::CTX,
+    ) {
+        if let Some(m) = &self.metrics {
+            m.active_connections.dec();
+
+            let duration = ctx.request_start.elapsed().as_secs_f64();
+            m.http_request_duration_seconds.observe(duration);
+
+            let status = session
+                .response_written()
+                .map(|r| r.status.as_u16())
+                .unwrap_or(0);
+            let method = session.req_header().method.to_string();
+            let host = extract_host(session).unwrap_or_default();
+
+            m.http_requests_total
+                .get_or_create(&RequestLabels {
+                    method,
+                    status,
+                    host,
+                })
+                .inc();
+        }
+    }
 }
 
 fn extract_host(session: &Session) -> Option<String> {
@@ -389,10 +431,11 @@ pub struct ProxyManager {
     ports: Vec<u16>,
     tls_ports: HashSet<u16>,
     cert_store: Arc<DynamicCertStore>,
+    metrics: Option<Metrics>,
 }
 
 impl ProxyManager {
-    pub fn new() -> Self {
+    pub fn new(metrics: Option<Metrics>) -> Self {
         let cache = Cache::builder()
             .max_capacity(CACHE_CAPACITY)
             .time_to_live(Duration::from_secs(CACHE_TTL_SECS))
@@ -404,6 +447,7 @@ impl ProxyManager {
             ports: Vec::new(),
             tls_ports: HashSet::new(),
             cert_store: Arc::new(DynamicCertStore::new()),
+            metrics,
         }
     }
 
@@ -460,8 +504,9 @@ impl ProxyManager {
             let ports = self.ports.clone();
             let tls_ports = self.tls_ports.clone();
             let cert_store = Arc::clone(&self.cert_store);
+            let metrics = self.metrics.clone();
             std::thread::spawn(move || {
-                start_pingora_server(ports, tls_ports, routes, cache, cert_store);
+                start_pingora_server(ports, tls_ports, routes, cache, cert_store, metrics);
             });
         }
 
@@ -489,6 +534,7 @@ fn start_pingora_server(
     routes: Arc<RwLock<RouteTable>>,
     cache: Cache<String, (ResponseHeader, Bytes)>,
     cert_store: Arc<DynamicCertStore>,
+    metrics: Option<Metrics>,
 ) {
     let mut server = match Server::new(None) {
         Ok(s) => s,
@@ -512,7 +558,7 @@ fn start_pingora_server(
     });
     server.bootstrap();
 
-    let proxy = NyrunProxy { routes, cache };
+    let proxy = NyrunProxy { routes, cache, metrics };
     let mut service = http_proxy_service(&server.configuration, proxy);
 
     for port in &ports {

@@ -27,3 +27,4 @@ moka = { version = "0.12", features = ["future"] }
 mimalloc = "0.1"
 zip = "8.2.0"
 openssl = { version = "0.10.76", default-features = false }
+prometheus-client = "0.23"

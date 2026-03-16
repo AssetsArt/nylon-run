@@ -1,7 +1,9 @@
+use crate::metrics::{self, Metrics};
 use crate::process::ProcessManager;
 use crate::proxy::ProxyManager;
 use crate::server::DaemonState;
 use crate::state;
+use prometheus_client::registry::Registry;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -63,13 +65,25 @@ pub fn ensure_daemon() -> Result<(), String> {
     spawn_daemon()
 }
 
+const METRICS_PORT: u16 = 9090;
+
 pub async fn run_daemon() {
     ensure_dirs();
     write_pid();
 
+    let mut registry = Registry::default();
+    let metrics = Metrics::new_registered(&mut registry);
+    let registry = Arc::new(registry);
+
+    // Start metrics server
+    let registry_clone = Arc::clone(&registry);
+    tokio::spawn(async move {
+        metrics::serve_metrics(METRICS_PORT, registry_clone).await;
+    });
+
     let daemon_state = Arc::new(Mutex::new(DaemonState {
-        process_mgr: ProcessManager::new(),
-        proxy_mgr: ProxyManager::new(),
+        process_mgr: ProcessManager::new(Some(metrics.clone())),
+        proxy_mgr: ProxyManager::new(Some(metrics)),
     }));
 
     // Restore saved processes

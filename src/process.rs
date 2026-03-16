@@ -1,3 +1,4 @@
+use crate::metrics::Metrics;
 use crate::protocol::{PortMapping, ProcessConfig, ProcessInfo, ProcessStatus, SslConfig};
 use chrono::Utc;
 use std::collections::HashMap;
@@ -23,12 +24,14 @@ struct ManagedProcess {
 
 pub struct ProcessManager {
     processes: HashMap<String, ManagedProcess>,
+    metrics: Option<Metrics>,
 }
 
 impl ProcessManager {
-    pub fn new() -> Self {
+    pub fn new(metrics: Option<Metrics>) -> Self {
         Self {
             processes: HashMap::new(),
+            metrics,
         }
     }
 
@@ -52,6 +55,9 @@ impl ProcessManager {
         let managed = self.start_process(config).await?;
         let pid = managed.pid;
         self.processes.insert(name.clone(), managed);
+        if let Some(m) = &self.metrics {
+            m.managed_processes.inc();
+        }
         Ok(format!(
             "process '{}' started (pid: {})",
             name,
@@ -119,6 +125,9 @@ impl ProcessManager {
                 shutdown_tx: None,
             },
         );
+        if let Some(m) = &self.metrics {
+            m.managed_processes.inc();
+        }
         Ok(format!("SPA '{}' registered", name))
     }
 
@@ -152,6 +161,9 @@ impl ProcessManager {
 
         kill_child(proc).await;
         self.processes.remove(name);
+        if let Some(m) = &self.metrics {
+            m.managed_processes.dec();
+        }
         info!(name, "process deleted");
         Ok(format!("process '{}' deleted", name))
     }
@@ -172,6 +184,13 @@ impl ProcessManager {
         let pid = managed.pid;
 
         self.processes.insert(name.to_string(), managed);
+        if let Some(m) = &self.metrics {
+            m.process_restarts_total
+                .get_or_create(&crate::metrics::ProcessLabels {
+                    name: name.to_string(),
+                })
+                .inc();
+        }
         info!(name, "process restarted");
         Ok(format!(
             "process '{}' restarted (pid: {}, restarts: {})",
@@ -194,6 +213,9 @@ impl ProcessManager {
             }
         }
         self.processes.clear();
+        if let Some(m) = &self.metrics {
+            m.managed_processes.set(0);
+        }
         info!("all processes killed");
         "all processes stopped".to_string()
     }

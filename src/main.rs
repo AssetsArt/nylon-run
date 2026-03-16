@@ -1,6 +1,7 @@
 mod cli;
 mod client;
 mod daemon;
+mod metrics;
 mod process;
 mod protocol;
 mod proxy;
