@@ -127,25 +127,12 @@ All runtime data (extracted binaries, OCI layers, state, logs) lives under `/tmp
    - **System metrics:** total managed processes, OCI pull stats
    - Ready for Grafana dashboards out of the box
 
-8. **Cloud UI (nyrun-cloud)** — centralized web dashboard for managing multiple nyrun instances
-   - **Multi-instance:** single dashboard to monitor and control all linked nyrun agents
-   - **Auth:** login with team/org support, role-based access (admin, viewer)
-   - **Agent → Cloud (push model):**
-     - nyrun agent pushes metrics, logs, and status to cloud via WebSocket or gRPC
-     - `nyrun link <api-key>` connects an instance to the cloud
-     - Agent maintains persistent outbound connection — no inbound ports needed on the agent side
-   - **Cloud → Agent commands:** restart, reload, del, update pushed back through the same connection
-   - **Dashboard features:**
-     - Real-time process list, status, CPU/memory per instance
-     - Aggregated logs viewer (stream from multiple agents)
-     - Proxy metrics & cache stats per instance
-     - Deploy: trigger OCI pull + run from the UI
-     - Backup/restore management
-   - **Architecture:**
-     - Cloud API server (separate deployable) — stores agent state, user accounts, org/team config
-     - Web frontend (SPA) — served by the cloud API or separately
-     - Agent heartbeat + reconnect with exponential backoff
-     - API key per instance, scoped to org/team
+8. **Cloud Agent** (cloud UI/server is a separate private project — not in this repo)
+   - `nyrun link <api-key>` / `nyrun unlink` — connect/disconnect to cloud
+   - Agent pushes metrics, logs, and status to cloud via WebSocket/gRPC
+   - Persistent outbound connection — no inbound ports needed on the agent side
+   - Heartbeat + reconnect with exponential backoff
+   - Receives and executes cloud → agent commands (restart, reload, del, update)
 
 ### Key Design Decisions
 
