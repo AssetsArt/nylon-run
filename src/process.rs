@@ -251,6 +251,7 @@ impl ProcessManager {
     }
 
     /// Update a process config in-place. Returns the old config for diffing.
+    #[allow(clippy::too_many_arguments)]
     pub fn update_config(
         &mut self,
         name: &str,
@@ -296,10 +297,10 @@ impl ProcessManager {
             let log_dir = Self::logs_dir(name);
             for log_name in &["stdout.log", "stderr.log"] {
                 let log_path = log_dir.join(log_name);
-                if let Ok(meta) = std::fs::metadata(&log_path) {
-                    if meta.len() > LOG_MAX_SIZE {
-                        rotate_log_file(&log_path);
-                    }
+                if let Ok(meta) = std::fs::metadata(&log_path)
+                    && meta.len() > LOG_MAX_SIZE
+                {
+                    rotate_log_file(&log_path);
                 }
             }
         }

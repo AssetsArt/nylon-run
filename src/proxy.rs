@@ -45,10 +45,10 @@ impl RouteTable {
         let port_routes: Vec<&RouteEntry> =
             self.entries.iter().filter(|r| r.port == port).collect();
 
-        if let Some(h) = host {
-            if let Some(r) = port_routes.iter().find(|r| r.host.as_deref() == Some(h)) {
-                return Some(r);
-            }
+        if let Some(h) = host
+            && let Some(r) = port_routes.iter().find(|r| r.host.as_deref() == Some(h))
+        {
+            return Some(r);
         }
         // Fallback to catch-all (no host specified)
         port_routes.iter().find(|r| r.host.is_none()).copied()
@@ -71,14 +71,12 @@ pub struct ProxyCtx {
 
 /// Get the listening port from the session's socket digest
 fn get_listen_port(session: &Session) -> u16 {
-    if let Some(digest) = session.digest() {
-        if let Some(sd) = &digest.socket_digest {
-            if let Some(addr) = sd.local_addr() {
-                if let Some(inet) = addr.as_inet() {
-                    return inet.port();
-                }
-            }
-        }
+    if let Some(digest) = session.digest()
+        && let Some(sd) = &digest.socket_digest
+        && let Some(addr) = sd.local_addr()
+        && let Some(inet) = addr.as_inet()
+    {
+        return inet.port();
     }
     80
 }
@@ -214,10 +212,10 @@ impl ProxyHttp for NyrunProxy {
             .insert_header("X-Forwarded-Proto", if is_https { "https" } else { "http" });
 
         // X-Forwarded-Host
-        if let Some(host) = session.req_header().headers.get("Host") {
-            if let Ok(host_str) = host.to_str() {
-                let _ = upstream_request.insert_header("X-Forwarded-Host", host_str);
-            }
+        if let Some(host) = session.req_header().headers.get("Host")
+            && let Ok(host_str) = host.to_str()
+        {
+            let _ = upstream_request.insert_header("X-Forwarded-Host", host_str);
         }
 
         Ok(())
@@ -263,18 +261,16 @@ impl ProxyHttp for NyrunProxy {
             ctx.response_body.extend_from_slice(b);
         }
 
-        if end_of_stream {
-            if let Some(mut header) = ctx.response_header.take() {
-                let cached_body = Bytes::from(std::mem::take(&mut ctx.response_body));
-                let _ = header.remove_header("Transfer-Encoding");
-                let _ = header.insert_header("Content-Length", cached_body.len().to_string());
+        if end_of_stream && let Some(mut header) = ctx.response_header.take() {
+            let cached_body = Bytes::from(std::mem::take(&mut ctx.response_body));
+            let _ = header.remove_header("Transfer-Encoding");
+            let _ = header.insert_header("Content-Length", cached_body.len().to_string());
 
-                let cache_key = ctx.cache_key.clone();
-                let cache = self.cache.clone();
-                tokio::spawn(async move {
-                    cache.insert(cache_key, (header, cached_body)).await;
-                });
-            }
+            let cache_key = ctx.cache_key.clone();
+            let cache = self.cache.clone();
+            tokio::spawn(async move {
+                cache.insert(cache_key, (header, cached_body)).await;
+            });
         }
 
         Ok(None)

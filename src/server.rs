@@ -41,7 +41,7 @@ pub async fn run_server(state: Arc<Mutex<DaemonState>>) {
             st.process_mgr.check_and_restart().await;
             // Rotate logs every ~60s (30 ticks * 2s)
             tick += 1;
-            if tick % 30 == 0 {
+            if tick.is_multiple_of(30) {
                 st.process_mgr.rotate_logs();
             }
         }
@@ -210,34 +210,34 @@ async fn handle_update(
 
         // Get the updated config from process manager
         let configs = st.process_mgr.get_configs();
-        if let Some(cfg) = configs.iter().find(|c| c.name == name) {
-            if let Some(pm) = &cfg.port_mapping {
-                let backend = if cfg.spa {
-                    let dir = PathBuf::from(&cfg.path);
-                    Backend::Spa(dir.canonicalize().unwrap_or(dir))
-                } else {
-                    let app_port = pm.app_port.unwrap_or(pm.public_port);
-                    let addr: SocketAddr = format!("127.0.0.1:{}", app_port).parse().unwrap();
-                    Backend::Proxy(addr)
-                };
+        if let Some(cfg) = configs.iter().find(|c| c.name == name)
+            && let Some(pm) = &cfg.port_mapping
+        {
+            let backend = if cfg.spa {
+                let dir = PathBuf::from(&cfg.path);
+                Backend::Spa(dir.canonicalize().unwrap_or(dir))
+            } else {
+                let app_port = pm.app_port.unwrap_or(pm.public_port);
+                let addr: SocketAddr = format!("127.0.0.1:{}", app_port).parse().unwrap();
+                Backend::Proxy(addr)
+            };
 
-                if let Err(e) = st
-                    .proxy_mgr
-                    .add_route(&name, pm.public_port, pm.host.clone(), backend)
-                    .await
-                {
-                    // Revert config on proxy failure
-                    let _ = st.process_mgr.update_config(
-                        &name,
-                        old_config.port_mapping,
-                        old_config.ssl,
-                        old_config.acme,
-                        old_config.env_file,
-                        Some(old_config.env_vars),
-                        Some(old_config.args),
-                    );
-                    return Response::Error(format!("proxy route update failed: {e}"));
-                }
+            if let Err(e) = st
+                .proxy_mgr
+                .add_route(&name, pm.public_port, pm.host.clone(), backend)
+                .await
+            {
+                // Revert config on proxy failure
+                let _ = st.process_mgr.update_config(
+                    &name,
+                    old_config.port_mapping,
+                    old_config.ssl,
+                    old_config.acme,
+                    old_config.env_file,
+                    Some(old_config.env_vars),
+                    Some(old_config.args),
+                );
+                return Response::Error(format!("proxy route update failed: {e}"));
             }
         }
     }
@@ -247,7 +247,7 @@ async fn handle_update(
     let is_spa = configs
         .iter()
         .find(|c| c.name == name)
-        .map_or(false, |c| c.spa);
+        .is_some_and(|c| c.spa);
 
     if !is_spa {
         match st.process_mgr.restart(&name).await {

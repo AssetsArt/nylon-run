@@ -66,6 +66,7 @@ impl DynamicCertStore {
     }
 
     /// Remove a certificate for a hostname.
+    #[allow(dead_code)]
     pub async fn remove_cert(&self, hostname: &str) {
         if hostname == "default" {
             *self.default_cert.write().await = None;
