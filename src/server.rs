@@ -15,6 +15,7 @@ const SOCK_PATH: &str = "/var/run/nyrun/nyrun.sock";
 pub struct DaemonState {
     pub process_mgr: ProcessManager,
     pub proxy_mgr: ProxyManager,
+    pub acme_configs: Arc<tokio::sync::RwLock<Vec<(String, String)>>>,
 }
 
 pub async fn run_server(state: Arc<Mutex<DaemonState>>) {
@@ -329,6 +330,7 @@ async fn handle_run(state: &Arc<Mutex<DaemonState>>, config: ProcessConfig) -> R
     let name = config.name.clone();
     let is_spa = config.spa;
     let port_mapping = config.port_mapping.clone();
+    let acme_email = config.acme.clone();
     let ssl = config
         .ssl
         .as_ref()
@@ -338,6 +340,13 @@ async fn handle_run(state: &Arc<Mutex<DaemonState>>, config: ProcessConfig) -> R
         Some(pm) => pm.clone(),
         None => return Response::Error("run requires --p port mapping".to_string()),
     };
+
+    // ACME requires a hostname in the port mapping
+    if acme_email.is_some() && pm.host.is_none() {
+        return Response::Error(
+            "ACME requires host-based port mapping (e.g. --p domain.com:443:8000)".to_string(),
+        );
+    }
 
     if is_spa {
         // SPA mode: no process, just serve static files
@@ -360,6 +369,12 @@ async fn handle_run(state: &Arc<Mutex<DaemonState>>, config: ProcessConfig) -> R
         // Register as a SPA "process" in the process manager for tracking
         if let Err(e) = st.process_mgr.register_spa(config).await {
             return Response::Error(e);
+        }
+
+        // Handle ACME if requested
+        if let Some(email) = &acme_email {
+            let hostname = pm.host.as_ref().unwrap().clone();
+            spawn_acme_issue(&st, hostname, email.clone());
         }
 
         Response::Ok(format!("SPA '{}' serving on port {}", name, pm.public_port))
@@ -385,6 +400,12 @@ async fn handle_run(state: &Arc<Mutex<DaemonState>>, config: ProcessConfig) -> R
                     return Response::Error(format!("proxy setup failed: {e}"));
                 }
 
+                // Handle ACME if requested
+                if let Some(email) = &acme_email {
+                    let hostname = pm.host.as_ref().unwrap().clone();
+                    spawn_acme_issue(&st, hostname, email.clone());
+                }
+
                 let port_info = if let Some(ref host) = pm.host {
                     format!("{}:{} -> {}", host, pm.public_port, app_port)
                 } else {
@@ -395,4 +416,24 @@ async fn handle_run(state: &Arc<Mutex<DaemonState>>, config: ProcessConfig) -> R
             Err(e) => Response::Error(e),
         }
     }
+}
+
+fn spawn_acme_issue(st: &DaemonState, hostname: String, email: String) {
+    let challenge_store = st.proxy_mgr.challenge_store().clone();
+    let cert_store = Arc::clone(st.proxy_mgr.cert_store());
+    let acme_configs = Arc::clone(&st.acme_configs);
+    tokio::spawn(async move {
+        // Register for renewal
+        {
+            let mut configs = acme_configs.write().await;
+            if !configs.iter().any(|(h, _)| h == &hostname) {
+                configs.push((hostname.clone(), email.clone()));
+            }
+        }
+        if let Err(e) =
+            crate::acme::issue_cert(&email, &hostname, &challenge_store, &cert_store).await
+        {
+            tracing::error!(hostname = %hostname, error = %e, "ACME cert issuance failed");
+        }
+    });
 }

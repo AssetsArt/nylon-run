@@ -1,3 +1,4 @@
+use crate::acme::ChallengeStore;
 use crate::metrics::{self, Metrics};
 use crate::process::ProcessManager;
 use crate::proxy::ProxyManager;
@@ -81,9 +82,27 @@ pub async fn run_daemon() {
         metrics::serve_metrics(METRICS_PORT, registry_clone).await;
     });
 
+    let challenge_store = ChallengeStore::default();
+    let acme_configs = Arc::new(tokio::sync::RwLock::new(Vec::new()));
+
+    let proxy_mgr = ProxyManager::new(Some(metrics.clone()), challenge_store);
+
+    // Start ACME renewal loop
+    {
+        let cert_store = Arc::clone(proxy_mgr.cert_store());
+        let challenge_store = proxy_mgr.challenge_store().clone();
+        let acme_configs = Arc::clone(&acme_configs);
+        tokio::spawn(crate::acme::renewal_loop(
+            cert_store,
+            challenge_store,
+            acme_configs,
+        ));
+    }
+
     let daemon_state = Arc::new(Mutex::new(DaemonState {
         process_mgr: ProcessManager::new(Some(metrics.clone())),
-        proxy_mgr: ProxyManager::new(Some(metrics)),
+        proxy_mgr,
+        acme_configs,
     }));
 
     // Restore saved processes

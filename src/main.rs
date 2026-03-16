@@ -1,3 +1,4 @@
+mod acme;
 mod cli;
 mod client;
 mod daemon;

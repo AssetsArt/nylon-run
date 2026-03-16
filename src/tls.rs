@@ -65,6 +65,38 @@ impl DynamicCertStore {
         Ok(())
     }
 
+    /// Add a certificate from PEM bytes directly (used by ACME).
+    pub async fn add_cert_from_pem(
+        &self,
+        hostname: &str,
+        cert_pem: &[u8],
+        key_pem: &[u8],
+    ) -> Result<(), String> {
+        let certs = X509::stack_from_pem(cert_pem)
+            .map_err(|e| format!("failed to parse cert chain: {e}"))?;
+        let key = PKey::private_key_from_pem(key_pem)
+            .map_err(|e| format!("failed to parse key: {e}"))?;
+
+        let cert = certs
+            .first()
+            .ok_or_else(|| "empty certificate chain".to_string())?
+            .clone();
+        let chain = certs.into_iter().skip(1).collect();
+
+        let tls_cert = TlsCertificate { cert, key, chain };
+
+        if hostname == "default" {
+            *self.default_cert.write().await = Some(tls_cert);
+        } else {
+            self.certs
+                .write()
+                .await
+                .insert(hostname.to_string(), tls_cert);
+        }
+
+        Ok(())
+    }
+
     /// Remove a certificate for a hostname.
     #[allow(dead_code)]
     pub async fn remove_cert(&self, hostname: &str) {

@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
+use crate::acme::ChallengeStore;
 use crate::metrics::{Metrics, RequestLabels};
 use crate::tls::DynamicCertStore;
 
@@ -62,6 +63,7 @@ pub struct NyrunProxy {
     routes: Arc<RwLock<RouteTable>>,
     cache: Cache<String, (ResponseHeader, Bytes)>,
     metrics: Option<Metrics>,
+    challenge_store: ChallengeStore,
 }
 
 pub struct ProxyCtx {
@@ -106,6 +108,22 @@ impl ProxyHttp for NyrunProxy {
         session: &mut Session,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<bool> {
+        // ACME HTTP-01 challenge handler
+        let uri_path = session.req_header().uri.path();
+        if let Some(token) = uri_path.strip_prefix("/.well-known/acme-challenge/")
+            && let Some(key_auth) = self.challenge_store.get(token).await
+        {
+            let body = Bytes::from(key_auth);
+            let mut header = ResponseHeader::build(StatusCode::OK, Some(2))?;
+            header.insert_header("content-type", "text/plain")?;
+            header.insert_header("content-length", body.len().to_string())?;
+            session
+                .write_response_header(Box::new(header), false)
+                .await?;
+            session.write_response_body(Some(body), true).await?;
+            return Ok(true);
+        }
+
         let listen_port = get_listen_port(session);
         let host = extract_host(session);
         let table = self.routes.read().await;
@@ -432,10 +450,11 @@ pub struct ProxyManager {
     tls_ports: HashSet<u16>,
     cert_store: Arc<DynamicCertStore>,
     metrics: Option<Metrics>,
+    challenge_store: ChallengeStore,
 }
 
 impl ProxyManager {
-    pub fn new(metrics: Option<Metrics>) -> Self {
+    pub fn new(metrics: Option<Metrics>, challenge_store: ChallengeStore) -> Self {
         let cache = Cache::builder()
             .max_capacity(CACHE_CAPACITY)
             .time_to_live(Duration::from_secs(CACHE_TTL_SECS))
@@ -448,7 +467,16 @@ impl ProxyManager {
             tls_ports: HashSet::new(),
             cert_store: Arc::new(DynamicCertStore::new()),
             metrics,
+            challenge_store,
         }
+    }
+
+    pub fn challenge_store(&self) -> &ChallengeStore {
+        &self.challenge_store
+    }
+
+    pub fn cert_store(&self) -> &Arc<DynamicCertStore> {
+        &self.cert_store
     }
 
     pub async fn add_route(
@@ -505,8 +533,9 @@ impl ProxyManager {
             let tls_ports = self.tls_ports.clone();
             let cert_store = Arc::clone(&self.cert_store);
             let metrics = self.metrics.clone();
+            let challenge_store = self.challenge_store.clone();
             std::thread::spawn(move || {
-                start_pingora_server(ports, tls_ports, routes, cache, cert_store, metrics);
+                start_pingora_server(ports, tls_ports, routes, cache, cert_store, metrics, challenge_store);
             });
         }
 
@@ -535,6 +564,7 @@ fn start_pingora_server(
     cache: Cache<String, (ResponseHeader, Bytes)>,
     cert_store: Arc<DynamicCertStore>,
     metrics: Option<Metrics>,
+    challenge_store: ChallengeStore,
 ) {
     let mut server = match Server::new(None) {
         Ok(s) => s,
@@ -558,7 +588,7 @@ fn start_pingora_server(
     });
     server.bootstrap();
 
-    let proxy = NyrunProxy { routes, cache, metrics };
+    let proxy = NyrunProxy { routes, cache, metrics, challenge_store };
     let mut service = http_proxy_service(&server.configuration, proxy);
 
     for port in &ports {
