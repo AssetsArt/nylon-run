@@ -87,6 +87,22 @@ impl ProcessManager {
                 config.args = merged;
             }
 
+            // OCI processes are isolated by default (deny io to their own folder)
+            // unless --allow all is specified
+            if !config.allow.iter().any(|a| a == "all") && !config.deny.contains(&"io".to_string())
+            {
+                config.deny.push("io".to_string());
+                config
+                    .allow
+                    .push(extract_dir.to_string_lossy().to_string());
+            }
+
+            // If --allow all, clear deny io so sandbox doesn't restrict
+            if config.allow.iter().any(|a| a == "all") {
+                config.deny.retain(|d| d != "io");
+                config.allow.retain(|a| a != "all");
+            }
+
             info!(
                 name = %config.name,
                 binary = %config.path,
@@ -104,6 +120,31 @@ impl ProcessManager {
         // Capture stdout/stderr
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
+
+        // Apply sandbox restrictions in child process before exec
+        if !config.deny.is_empty() {
+            let deny = config.deny.clone();
+            let allow = config.allow.clone();
+            let working_dir = std::path::Path::new(&config.path)
+                .parent()
+                .unwrap_or(std::path::Path::new("/"))
+                .to_string_lossy()
+                .to_string();
+
+            // For OCI processes, use the OCI extraction dir as working dir
+            let working_dir = if config.is_oci {
+                format!("{}/{}", "/var/run/nyrun/oci", config.name)
+            } else {
+                working_dir
+            };
+
+            unsafe {
+                cmd.pre_exec(move || {
+                    crate::sandbox::apply_sandbox(&deny, &allow, &working_dir)
+                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::PermissionDenied, e))
+                });
+            }
+        }
 
         let mut child = cmd
             .spawn()

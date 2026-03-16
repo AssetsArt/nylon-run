@@ -5,6 +5,7 @@ mod daemon;
 mod metrics;
 mod oci;
 mod process;
+mod sandbox;
 mod protocol;
 mod proxy;
 mod server;
