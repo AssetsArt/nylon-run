@@ -1,7 +1,7 @@
 use crate::process::ProcessManager;
 use crate::protocol::{self, PortMapping, ProcessConfig, Request, Response, SslConfig};
 use crate::proxy::{Backend, ProxyManager};
-use crate::state;
+use crate::state::StateStore;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -16,6 +16,7 @@ pub struct DaemonState {
     pub process_mgr: ProcessManager,
     pub proxy_mgr: ProxyManager,
     pub acme_configs: Arc<tokio::sync::RwLock<Vec<(String, String)>>>,
+    pub state_store: StateStore,
 }
 
 pub async fn run_server(state: Arc<Mutex<DaemonState>>) {
@@ -138,7 +139,7 @@ async fn handle_request(request: Request, state: &Arc<Mutex<DaemonState>>) -> Re
         Request::Save => {
             let st = state.lock().await;
             let configs = st.process_mgr.get_configs();
-            match state::save_state(&configs) {
+            match st.state_store.save(&configs).await {
                 Ok(()) => Response::Ok(format!("saved {} processes", configs.len())),
                 Err(e) => Response::Error(e),
             }
@@ -146,7 +147,8 @@ async fn handle_request(request: Request, state: &Arc<Mutex<DaemonState>>) -> Re
         Request::Kill => {
             let mut st = state.lock().await;
             let msg = st.process_mgr.kill_all().await;
-            let _ = state::save_state(&[]);
+            let _ = st.state_store.save(&[]).await;
+            st.state_store.close().await;
             Response::Ok(msg)
         }
     }

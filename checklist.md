@@ -3,7 +3,7 @@
 ## Core Infrastructure
 - [x] Project setup (Cargo.toml dependencies, module structure)
 - [x] CLI parsing with clap (`bin`, `run`, `ls`, `del`, `restart`, `reload`, `update`, `logs`, `save`, `startup`, `unstartup`, `kill`, `backup`, `restore`, `link`, `unlink`)
-- [ ] SlateDB persistent state (`/var/run/nyrun/state/`) — currently using JSON file
+- [x] SlateDB persistent state (`/var/run/nyrun/state/`) — migrated from JSON file with auto-migration
 - [x] Working directory setup (`/var/run/nyrun/`)
 
 ## Daemon
@@ -47,11 +47,11 @@
 - [x] Default cert fallback
 
 ## Auto SSL (ACME)
-- [ ] `--acme EMAIL` — Let's Encrypt integration
-- [ ] HTTP-01 challenge handler (`/.well-known/acme-challenge/`)
-- [ ] Cert storage (`/var/run/nyrun/certs/`)
-- [ ] Auto-renewal before expiry
-- [ ] Host derived from `--p HOST:PORT:APP_PORT`
+- [x] `--acme EMAIL` — Let's Encrypt integration
+- [x] HTTP-01 challenge handler (`/.well-known/acme-challenge/`)
+- [x] Cert storage (`/var/run/nyrun/certs/`)
+- [x] Auto-renewal before expiry (12h check interval)
+- [x] Host derived from `--p HOST:PORT:APP_PORT`
 
 ## In-Memory Caching (moka)
 - [x] Tier 1: moka in-memory cache (10,000 entries, 60s TTL)
@@ -62,18 +62,18 @@
 - [x] `X-Cache: HIT` header on cache hits
 
 ## OCI Support
-- [ ] Pull images from OCI registries (ghcr.io, etc.)
-- [ ] Extract layers to `/var/run/nyrun/oci/<name>/`
-- [ ] Execute extracted binaries natively
-- [ ] Isolated by default (eBPF sandbox to own folder on Linux)
-- [ ] `--allow PATHS` — whitelist additional directories
-- [ ] `--allow all` — disable isolation
+- [x] Pull images from OCI registries (ghcr.io, etc.)
+- [x] Extract layers to `/var/run/nyrun/oci/<name>/`
+- [x] Execute extracted binaries natively
+- [x] Isolated by default (eBPF sandbox to own folder on Linux)
+- [x] `--allow PATHS` — whitelist additional directories
+- [x] `--allow all` — disable isolation
 
 ## eBPF Sandboxing (Linux only)
-- [ ] `--deny net` — block socket syscalls per process
-- [ ] `--deny io` — restrict filesystem access outside working dir
-- [ ] `--allow PATHS` — whitelist comma-separated directories
-- [ ] Per-process enforcement, no container overhead
+- [x] `--deny net` — block socket syscalls per process (seccomp-BPF)
+- [x] `--deny io` — restrict filesystem access outside working dir (Landlock)
+- [x] `--allow PATHS` — whitelist comma-separated directories
+- [x] Per-process enforcement, no container overhead
 
 ## Logging
 - [x] stdout/stderr capture to `/var/run/nyrun/logs/`
@@ -82,10 +82,11 @@
 - [x] Log rotation (10MB max, 5 rotated files, checked every ~60s)
 
 ## Observability (Prometheus)
-- [ ] `/metrics` endpoint on dedicated port
-- [ ] Process metrics: uptime, restart count, CPU/memory per process
-- [ ] Proxy metrics: request count, latency histograms, status codes, active connections
-- [ ] Cache metrics: hit/miss ratio, cache size, eviction count
+- [x] `/metrics` endpoint on dedicated port (9090)
+- [x] Process metrics: restart count per process
+- [x] Proxy metrics: request count, latency histograms, status codes, active connections
+- [x] Cache metrics: hit/miss counters
+- [ ] Process metrics: CPU/memory per process
 - [ ] System metrics: total managed processes, OCI pull stats
 
 ## Backup/Restore

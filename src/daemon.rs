@@ -3,7 +3,7 @@ use crate::metrics::{self, Metrics};
 use crate::process::ProcessManager;
 use crate::proxy::ProxyManager;
 use crate::server::DaemonState;
-use crate::state;
+use crate::state::{self, StateStore};
 use prometheus_client::registry::Registry;
 use std::path::Path;
 use std::sync::Arc;
@@ -99,16 +99,32 @@ pub async fn run_daemon() {
         ));
     }
 
+    // Open SlateDB state store
+    let state_store = match StateStore::open().await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!(error = %e, "failed to open SlateDB state store");
+            std::process::exit(1);
+        }
+    };
+
+    // Migrate old JSON state if present
+    state::migrate_json_to_slatedb(&state_store).await;
+
+    // Restore saved processes
+    let saved = state_store.load().await;
+    if !saved.is_empty() {
+        info!(count = saved.len(), "restoring saved processes");
+    }
+
     let daemon_state = Arc::new(Mutex::new(DaemonState {
         process_mgr: ProcessManager::new(Some(metrics.clone())),
         proxy_mgr,
         acme_configs,
+        state_store,
     }));
 
-    // Restore saved processes
-    let saved = state::load_state();
     if !saved.is_empty() {
-        info!(count = saved.len(), "restoring saved processes");
         daemon_state
             .lock()
             .await
