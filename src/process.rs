@@ -57,6 +57,16 @@ impl ProcessManager {
         let name = config.name.clone();
         let managed = self.start_process(config).await?;
         let pid = managed.pid;
+
+        // Write PID file if configured
+        if let Some(ref pid_path) = managed.config.pid_file {
+            if let Some(p) = pid {
+                if let Err(e) = std::fs::write(pid_path, p.to_string()) {
+                    warn!(path = %pid_path, error = %e, "failed to write pid file");
+                }
+            }
+        }
+
         self.processes.insert(name.clone(), managed);
         if let Some(m) = &self.metrics {
             m.managed_processes.inc();
@@ -231,6 +241,11 @@ impl ProcessManager {
             .get_mut(name)
             .ok_or_else(|| format!("process '{}' not found", name))?;
 
+        // Clean up PID file
+        if let Some(ref pid_path) = proc.config.pid_file {
+            let _ = std::fs::remove_file(pid_path);
+        }
+
         kill_child(proc).await;
         self.processes.remove(name);
         if let Some(m) = &self.metrics {
@@ -254,6 +269,13 @@ impl ProcessManager {
         let mut managed = self.start_process(config).await?;
         managed.restart_count = restart_count;
         let pid = managed.pid;
+
+        // Update PID file on restart
+        if let Some(ref pid_path) = managed.config.pid_file {
+            if let Some(p) = pid {
+                let _ = std::fs::write(pid_path, p.to_string());
+            }
+        }
 
         self.processes.insert(name.to_string(), managed);
         if let Some(m) = &self.metrics {

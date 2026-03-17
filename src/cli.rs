@@ -61,6 +61,14 @@ pub enum Command {
         #[arg(long)]
         allow: Option<String>,
     },
+    /// Start processes from a config file (like PM2 ecosystem)
+    Start {
+        /// Path to config file (JSON)
+        file: String,
+        /// Start only this app by name
+        #[arg(long)]
+        only: Option<String>,
+    },
     /// List all managed processes
     Ls,
     /// Stop and remove a process

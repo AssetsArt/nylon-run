@@ -42,6 +42,8 @@ pub struct ProcessConfig {
     pub is_oci: bool,
     #[serde(default)]
     pub oci_reference: Option<String>,
+    #[serde(default)]
+    pub pid_file: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

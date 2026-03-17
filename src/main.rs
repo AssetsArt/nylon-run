@@ -15,6 +15,7 @@ mod tls;
 use clap::Parser;
 use cli::{Cli, Command};
 use protocol::{PortMapping, ProcessConfig, ProcessMode, Request, SslConfig};
+use serde::Deserialize;
 use std::collections::HashMap;
 
 #[global_allocator]
@@ -121,6 +122,99 @@ fn derive_name(path: &str, name: &Option<String>) -> String {
         .to_string()
 }
 
+// --- Config file types (for `nyrun start`) ---
+
+#[derive(Deserialize)]
+struct ConfigFile {
+    apps: Vec<AppEntry>,
+}
+
+#[derive(Deserialize)]
+struct AppEntry {
+    name: String,
+    path: String,
+    #[serde(default)]
+    port: Option<String>,
+    #[serde(default)]
+    args: Option<String>,
+    #[serde(default)]
+    env_file: Option<String>,
+    #[serde(default)]
+    env: Option<HashMap<String, String>>,
+    #[serde(default)]
+    spa: bool,
+    #[serde(default)]
+    ssl: Option<Vec<String>>,
+    #[serde(default)]
+    acme: Option<String>,
+    #[serde(default)]
+    deny: Option<String>,
+    #[serde(default)]
+    allow: Option<String>,
+    #[serde(default)]
+    pid_file: Option<String>,
+}
+
+fn app_entry_to_config(app: &AppEntry) -> Result<ProcessConfig, String> {
+    let env_vars = match (&app.env_file, &app.env) {
+        (Some(ef), Some(extra)) => {
+            let mut vars = parse_env_file(ef)?;
+            vars.extend(extra.clone());
+            vars
+        }
+        (Some(ef), None) => parse_env_file(ef)?,
+        (None, Some(extra)) => extra.clone(),
+        (None, None) => HashMap::new(),
+    };
+
+    let port_mapping = match &app.port {
+        Some(p) => Some(parse_port_mapping(p)?),
+        None => None,
+    };
+
+    let mode = if port_mapping.is_some() {
+        ProcessMode::Run
+    } else {
+        ProcessMode::Bin
+    };
+
+    let ssl_config = app.ssl.as_ref().and_then(|s| {
+        if s.len() == 2 {
+            Some(SslConfig {
+                cert_path: s[0].clone(),
+                key_path: s[1].clone(),
+            })
+        } else {
+            None
+        }
+    });
+
+    let is_oci = oci::is_oci_reference(&app.path);
+    let oci_reference = if is_oci {
+        Some(app.path.clone())
+    } else {
+        None
+    };
+
+    Ok(ProcessConfig {
+        name: app.name.clone(),
+        path: app.path.clone(),
+        args: parse_args_string(&app.args),
+        env_vars,
+        env_file: app.env_file.clone(),
+        mode,
+        port_mapping,
+        spa: app.spa,
+        ssl: ssl_config,
+        acme: app.acme.clone(),
+        deny: parse_deny(&app.deny),
+        allow: parse_allow(&app.allow),
+        is_oci,
+        oci_reference,
+        pid_file: app.pid_file.clone(),
+    })
+}
+
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
@@ -176,6 +270,7 @@ async fn main() {
                 allow: parse_allow(&allow),
                 is_oci,
                 oci_reference,
+                pid_file: None,
             };
 
             client::execute(Request::Bin { config }).await;
@@ -235,9 +330,66 @@ async fn main() {
                 allow: parse_allow(&allow),
                 is_oci,
                 oci_reference,
+                pid_file: None,
             };
 
             client::execute(Request::Run { config }).await;
+        }
+
+        Command::Start { file, only } => {
+            let content = match std::fs::read_to_string(&file) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("error: failed to read '{}': {e}", file);
+                    std::process::exit(1);
+                }
+            };
+
+            let config_file: ConfigFile = match serde_json::from_str(&content) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("error: invalid config file: {e}");
+                    std::process::exit(1);
+                }
+            };
+
+            let apps: Vec<&AppEntry> = if let Some(ref name) = only {
+                match config_file.apps.iter().find(|a| &a.name == name) {
+                    Some(app) => vec![app],
+                    None => {
+                        eprintln!("error: app '{}' not found in config", name);
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                config_file.apps.iter().collect()
+            };
+
+            let mut errors = 0;
+            for app in &apps {
+                let config = match app_entry_to_config(app) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("[{}] error: {e}", app.name);
+                        errors += 1;
+                        continue;
+                    }
+                };
+
+                let request = if config.port_mapping.is_some() {
+                    Request::Run { config }
+                } else {
+                    Request::Bin { config }
+                };
+
+                print!("[{}] ", app.name);
+                client::execute(request).await;
+            }
+
+            if errors > 0 {
+                eprintln!("{errors} app(s) failed to start");
+                std::process::exit(1);
+            }
         }
 
         Command::Ls => {

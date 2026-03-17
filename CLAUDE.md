@@ -35,11 +35,14 @@ nyrun run ./xxx --deny io --allow /tmp/data,/var/log --p 80:8000  # deny I/O exc
 nyrun bin ./xxx --deny net                        # process-only with network denied
 nyrun run ghcr.io/xx/xx:latest --p 8081:8081     # pull OCI image, isolated to its own folder by default
 nyrun run ghcr.io/xx/xx:latest --allow all --p 8081:8081  # OCI but allow full filesystem access
+nyrun start ecosystem.json                        # start all apps from config file (like PM2)
+nyrun start ecosystem.json --only api             # start only one app from config
 nyrun ls                                          # list all managed processes with status
 nyrun del <name>                                  # stop and remove a process
 nyrun restart <name>                              # restart a process
 nyrun reload <name>                               # graceful reload (zero-downtime)
 nyrun update <name> [--p ...] [--ssl ...] [...]   # update process config without removing
+nyrun update <name> --image ghcr.io/xx/xx:v2     # update OCI image (re-pull + restart)
 nyrun logs <name>                                 # tail logs for a process
 nyrun logs <name> --lines 100                    # last N lines
 nyrun backup -o output_name                      # zip entire /var/run/nyrun/ as backup
@@ -70,6 +73,32 @@ nyrun unlink                                      # disconnect from cloud UI
   - `--allow PATHS` — whitelist comma-separated directories when using `--deny io` (e.g. `--allow /tmp/data,/var/log`)
   - `--args "ARGS"` — pass arguments to the spawned binary (quoted string)
   - Accepts local paths (binary or directory) or OCI image references (e.g. `ghcr.io/org/image:tag`)
+- `start` subcommand — start processes from a JSON config file (like PM2 ecosystem file)
+  - Config is read once at startup; the file does not need to persist after that
+  - `--only NAME` — start only a specific app from the config
+  - If `port` is present in an app entry → `run` mode; otherwise → `bin` mode
+  - Config format:
+    ```json
+    {
+      "apps": [
+        {
+          "name": "api",
+          "path": "./api-server",
+          "port": "domain.com:443:8000",
+          "args": "--verbose",
+          "env_file": ".env",
+          "env": { "NODE_ENV": "production" },
+          "spa": false,
+          "ssl": ["cert.pem", "key.pem"],
+          "acme": "user@mail.com",
+          "deny": "net,io",
+          "allow": "/tmp",
+          "pid_file": "/var/run/api.pid"
+        }
+      ]
+    }
+    ```
+- `update` subcommand — `--image ghcr.io/xx/xx:v2` re-pulls OCI image and restarts
 - `backup` / `restore` — zip/unzip the entire `/var/run/nyrun/` working directory
 
 ### Working Directory
