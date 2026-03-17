@@ -478,11 +478,12 @@ fn content_type(path: &Path) -> &'static str {
 // --- Proxy manager ---
 
 const CACHE_CAPACITY: u64 = 10000;
-const CACHE_TTL_SECS: u64 = 60;
+const DEFAULT_CACHE_TTL_SECS: u64 = 3;
 
 pub struct ProxyManager {
     routes: Arc<RwLock<RouteTable>>,
     cache: Cache<String, (ResponseHeader, Bytes)>,
+    cache_ttl_secs: u64,
     ports: Vec<u16>,
     tls_ports: HashSet<u16>,
     cert_store: Arc<DynamicCertStore>,
@@ -494,18 +495,27 @@ impl ProxyManager {
     pub fn new(metrics: Option<Metrics>, challenge_store: ChallengeStore) -> Self {
         let cache = Cache::builder()
             .max_capacity(CACHE_CAPACITY)
-            .time_to_live(Duration::from_secs(CACHE_TTL_SECS))
+            .time_to_live(Duration::from_secs(DEFAULT_CACHE_TTL_SECS))
             .build();
 
         Self {
             routes: Arc::new(RwLock::new(RouteTable::default())),
             cache,
+            cache_ttl_secs: DEFAULT_CACHE_TTL_SECS,
             ports: Vec::new(),
             tls_ports: HashSet::new(),
             cert_store: Arc::new(DynamicCertStore::new()),
             metrics,
             challenge_store,
         }
+    }
+
+    pub fn set_cache_ttl(&mut self, secs: u64) {
+        self.cache_ttl_secs = secs;
+        self.cache = Cache::builder()
+            .max_capacity(CACHE_CAPACITY)
+            .time_to_live(Duration::from_secs(secs))
+            .build();
     }
 
     pub fn challenge_store(&self) -> &ChallengeStore {

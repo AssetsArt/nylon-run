@@ -117,6 +117,13 @@ pub enum Command {
         #[arg(long, default_value = "50")]
         lines: usize,
     },
+    /// Set a global config value (e.g. cache-ttl)
+    Set {
+        /// Config key (e.g. cache-ttl)
+        key: String,
+        /// Config value
+        value: String,
+    },
     /// Save current process list for restore on reboot
     Save,
     /// Generate systemd unit + enable auto-start on boot

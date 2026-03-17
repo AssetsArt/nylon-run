@@ -100,6 +100,10 @@ pub enum Request {
         name: String,
         lines: usize,
     },
+    Set {
+        key: String,
+        value: String,
+    },
     Save,
     Kill,
 }

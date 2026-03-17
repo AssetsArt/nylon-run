@@ -433,6 +433,10 @@ async fn main() {
             client::execute(Request::Logs { name, lines }).await;
         }
 
+        Command::Set { key, value } => {
+            client::execute(Request::Set { key, value }).await;
+        }
+
         Command::Save => {
             client::execute(Request::Save).await;
         }
