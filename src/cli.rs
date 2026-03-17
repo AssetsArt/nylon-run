@@ -117,6 +117,12 @@ pub enum Command {
         #[arg(long, default_value = "50")]
         lines: usize,
     },
+    /// Export running processes as a config file (for use with `nyrun start`)
+    Export {
+        /// Output file path (default: print to stdout)
+        #[arg(short, long)]
+        o: Option<String>,
+    },
     /// Set a global config value (e.g. cache-ttl)
     Set {
         /// Config key (e.g. cache-ttl)

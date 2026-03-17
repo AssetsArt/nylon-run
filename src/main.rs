@@ -15,7 +15,7 @@ mod tls;
 use clap::Parser;
 use cli::{Cli, Command};
 use protocol::{PortMapping, ProcessConfig, ProcessMode, Request, SslConfig};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 #[global_allocator]
@@ -124,12 +124,12 @@ fn derive_name(path: &str, name: &Option<String>) -> String {
 
 // --- Config file types (for `nyrun start`) ---
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct ConfigFile {
     apps: Vec<AppEntry>,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct AppEntry {
     name: String,
     path: String,
@@ -213,6 +213,61 @@ fn app_entry_to_config(app: &AppEntry) -> Result<ProcessConfig, String> {
         oci_reference,
         pid_file: app.pid_file.clone(),
     })
+}
+
+fn config_to_app_entry(c: &ProcessConfig) -> AppEntry {
+    let port = c.port_mapping.as_ref().map(|pm| {
+        if let Some(ref host) = pm.host {
+            format!("{}:{}:{}", host, pm.public_port, pm.app_port.unwrap_or(pm.public_port))
+        } else if let Some(app) = pm.app_port {
+            format!("{}:{}", pm.public_port, app)
+        } else {
+            pm.public_port.to_string()
+        }
+    });
+
+    let path = c.oci_reference.as_deref().unwrap_or(&c.path).to_string();
+
+    let args = if c.args.is_empty() {
+        None
+    } else {
+        Some(shlex::try_join(c.args.iter().map(|s| s.as_str())).unwrap_or_default())
+    };
+
+    let env = if c.env_vars.is_empty() {
+        None
+    } else {
+        Some(c.env_vars.clone())
+    };
+
+    let ssl = c.ssl.as_ref().map(|s| vec![s.cert_path.clone(), s.key_path.clone()]);
+
+    let deny = if c.deny.is_empty() {
+        None
+    } else {
+        Some(c.deny.join(","))
+    };
+
+    let allow = if c.allow.is_empty() {
+        None
+    } else {
+        Some(c.allow.join(","))
+    };
+
+    AppEntry {
+        name: c.name.clone(),
+        path,
+        port,
+        args,
+        env_file: c.env_file.clone(),
+        env,
+        spa: c.spa,
+        ssl,
+        acme: c.acme.clone(),
+        deny,
+        allow,
+        pid_file: c.pid_file.clone(),
+    }
 }
 
 #[tokio::main]
@@ -431,6 +486,29 @@ async fn main() {
 
         Command::Logs { name, lines } => {
             client::execute(Request::Logs { name, lines }).await;
+        }
+
+        Command::Export { o } => {
+            match client::send_request(Request::Export).await {
+                Ok(protocol::Response::ConfigList(configs)) => {
+                    let apps: Vec<AppEntry> = configs.iter().map(config_to_app_entry).collect();
+                    let file = ConfigFile { apps };
+                    let json = serde_json::to_string_pretty(&file).unwrap();
+                    match o {
+                        Some(path) => {
+                            if let Err(e) = std::fs::write(&path, &json) {
+                                eprintln!("error: failed to write '{}': {e}", path);
+                                std::process::exit(1);
+                            }
+                            println!("exported to {path}");
+                        }
+                        None => println!("{json}"),
+                    }
+                }
+                Ok(protocol::Response::Error(e)) => eprintln!("error: {e}"),
+                Ok(_) => eprintln!("error: unexpected response"),
+                Err(e) => eprintln!("error: {e}"),
+            }
         }
 
         Command::Set { key, value } => {

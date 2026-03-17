@@ -104,6 +104,7 @@ pub enum Request {
         key: String,
         value: String,
     },
+    Export,
     Save,
     Kill,
 }
@@ -112,6 +113,7 @@ pub enum Request {
 pub enum Response {
     Ok(String),
     ProcessList(Vec<ProcessInfo>),
+    ConfigList(Vec<ProcessConfig>),
     Logs(String),
     Error(String),
 }

@@ -3,7 +3,7 @@ use tokio::net::UnixStream;
 
 const SOCK_PATH: &str = "/var/run/nyrun/nyrun.sock";
 
-async fn send_request(request: Request) -> Result<Response, String> {
+pub async fn send_request(request: Request) -> Result<Response, String> {
     crate::daemon::ensure_daemon()?;
 
     let mut stream = UnixStream::connect(SOCK_PATH)
@@ -23,6 +23,7 @@ fn print_response(response: Response) {
     match response {
         Response::Ok(msg) => println!("{msg}"),
         Response::ProcessList(procs) => print_process_list(&procs),
+        Response::ConfigList(_) => {} // handled directly by caller
         Response::Logs(logs) => print!("{logs}"),
         Response::Error(e) => eprintln!("error: {e}"),
     }

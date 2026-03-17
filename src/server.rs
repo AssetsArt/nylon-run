@@ -151,6 +151,10 @@ async fn handle_request(request: Request, state: &Arc<Mutex<DaemonState>>) -> Re
                 _ => Response::Error(format!("unknown config key '{}'. available: cache-ttl", key)),
             }
         }
+        Request::Export => {
+            let st = state.lock().await;
+            Response::ConfigList(st.process_mgr.get_configs())
+        }
         Request::Save => {
             let st = state.lock().await;
             let configs = st.process_mgr.get_configs();
