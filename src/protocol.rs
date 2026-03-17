@@ -92,6 +92,7 @@ pub enum Request {
         acme: Option<String>,
         env_file: Option<String>,
         args: Option<String>,
+        image: Option<String>,
     },
     Logs {
         name: String,

@@ -97,6 +97,9 @@ pub enum Command {
         /// New args
         #[arg(long)]
         args: Option<String>,
+        /// New OCI image reference (re-pull and update)
+        #[arg(long)]
+        image: Option<String>,
     },
     /// View process logs
     Logs {

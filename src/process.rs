@@ -385,6 +385,15 @@ impl ProcessManager {
         Ok(old_config)
     }
 
+    /// Update OCI-specific fields after a new image has been pulled.
+    pub fn update_oci_config(&mut self, name: &str, oci_reference: &str, entrypoint: &str) {
+        if let Some(proc) = self.processes.get_mut(name) {
+            proc.config.oci_reference = Some(oci_reference.to_string());
+            proc.config.path = entrypoint.to_string();
+            proc.config.is_oci = true;
+        }
+    }
+
     /// Rotate logs for all processes if they exceed the size limit
     pub fn rotate_logs(&self) {
         for name in self.processes.keys() {

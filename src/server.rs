@@ -129,7 +129,8 @@ async fn handle_request(request: Request, state: &Arc<Mutex<DaemonState>>) -> Re
             acme,
             env_file,
             args,
-        } => handle_update(state, name, port, ssl, acme, env_file, args).await,
+            image,
+        } => handle_update(state, name, port, ssl, acme, env_file, args, image).await,
         Request::Logs { name, lines } => {
             let st = state.lock().await;
             match st.process_mgr.get_logs(&name, lines) {
@@ -163,7 +164,24 @@ async fn handle_update(
     acme: Option<String>,
     env_file: Option<String>,
     args: Option<String>,
+    image: Option<String>,
 ) -> Response {
+    // If a new OCI image is provided, pull and extract it before taking the lock
+    let oci_update = if let Some(ref img_ref) = image {
+        if !crate::oci::is_oci_reference(img_ref) {
+            return Response::Error(format!("'{}' is not a valid OCI image reference", img_ref));
+        }
+        match crate::oci::pull_and_extract(img_ref, &name).await {
+            Ok(extract_dir) => match crate::oci::find_entrypoint(&extract_dir) {
+                Ok((entrypoint, extra_args)) => Some((img_ref.clone(), entrypoint, extra_args)),
+                Err(e) => return Response::Error(format!("OCI entrypoint error: {e}")),
+            },
+            Err(e) => return Response::Error(format!("OCI pull failed: {e}")),
+        }
+    } else {
+        None
+    };
+
     // Parse port mapping if provided
     let port_mapping = match port.as_deref() {
         Some(p) => match parse_port_mapping_str(p) {
@@ -206,6 +224,11 @@ async fn handle_update(
         Ok(old) => old,
         Err(e) => return Response::Error(e),
     };
+
+    // Apply OCI image update to config
+    if let Some((img_ref, entrypoint, _extra_args)) = &oci_update {
+        st.process_mgr.update_oci_config(&name, img_ref, entrypoint);
+    }
 
     // Check if proxy route needs updating (port mapping changed)
     if port.is_some() {

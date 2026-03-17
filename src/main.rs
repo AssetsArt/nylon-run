@@ -263,6 +263,7 @@ async fn main() {
             acme,
             env_file,
             args,
+            image,
         } => {
             client::execute(Request::Update {
                 name,
@@ -271,6 +272,7 @@ async fn main() {
                 acme,
                 env_file,
                 args,
+                image,
             })
             .await;
         }
