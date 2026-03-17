@@ -3,6 +3,7 @@ use crate::protocol::{PortMapping, ProcessConfig, ProcessInfo, ProcessStatus, Ss
 use chrono::Utc;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use sysinfo::{Pid, System};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
@@ -25,6 +26,7 @@ struct ManagedProcess {
 pub struct ProcessManager {
     processes: HashMap<String, ManagedProcess>,
     metrics: Option<Metrics>,
+    sys: System,
 }
 
 impl ProcessManager {
@@ -32,6 +34,7 @@ impl ProcessManager {
         Self {
             processes: HashMap::new(),
             metrics,
+            sys: System::new(),
         }
     }
 
@@ -393,6 +396,47 @@ impl ProcessManager {
                 {
                     rotate_log_file(&log_path);
                 }
+            }
+        }
+    }
+
+    /// Collect CPU and memory stats for all running processes
+    pub fn collect_process_stats(&mut self) {
+        let metrics = match &self.metrics {
+            Some(m) => m,
+            None => return,
+        };
+
+        let pids: Vec<(String, Pid)> = self
+            .processes
+            .iter()
+            .filter_map(|(name, proc)| {
+                proc.pid.map(|pid| (name.clone(), Pid::from_u32(pid)))
+            })
+            .collect();
+
+        if pids.is_empty() {
+            return;
+        }
+
+        self.sys.refresh_processes(
+            sysinfo::ProcessesToUpdate::Some(&pids.iter().map(|(_, pid)| *pid).collect::<Vec<_>>()),
+            true,
+        );
+
+        for (name, pid) in &pids {
+            if let Some(proc) = self.sys.process(*pid) {
+                let labels = crate::metrics::ProcessLabels {
+                    name: name.clone(),
+                };
+                metrics
+                    .process_cpu_usage
+                    .get_or_create(&labels)
+                    .set(proc.cpu_usage() as i64);
+                metrics
+                    .process_memory_bytes
+                    .get_or_create(&labels)
+                    .set(proc.memory() as i64);
             }
         }
     }

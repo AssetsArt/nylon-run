@@ -86,7 +86,7 @@
 - [x] Process metrics: restart count per process
 - [x] Proxy metrics: request count, latency histograms, status codes, active connections
 - [x] Cache metrics: hit/miss counters
-- [ ] Process metrics: CPU/memory per process
+- [x] Process metrics: CPU/memory per process (sysinfo, collected every 2s)
 - [ ] System metrics: total managed processes, OCI pull stats
 
 ## Backup/Restore

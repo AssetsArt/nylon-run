@@ -16,7 +16,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
 use crate::acme::ChallengeStore;
-use crate::metrics::{Metrics, RequestLabels};
+use crate::metrics::{HostLabels, Metrics, RequestLabels};
 use crate::tls::DynamicCertStore;
 
 // --- Route types ---
@@ -72,6 +72,8 @@ pub struct ProxyCtx {
     response_header: Option<ResponseHeader>,
     response_body: Vec<u8>,
     request_start: Instant,
+    request_bytes: u64,
+    response_bytes: u64,
 }
 
 /// Get the listening port from the session's socket digest
@@ -100,6 +102,8 @@ impl ProxyHttp for NyrunProxy {
             response_header: None,
             response_body: Vec::new(),
             request_start: Instant::now(),
+            request_bytes: 0,
+            response_bytes: 0,
         }
     }
 
@@ -108,6 +112,15 @@ impl ProxyHttp for NyrunProxy {
         session: &mut Session,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<bool> {
+        // Track request size from Content-Length
+        ctx.request_bytes = session
+            .req_header()
+            .headers
+            .get("content-length")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0);
+
         // ACME HTTP-01 challenge handler
         let uri_path = session.req_header().uri.path();
         if let Some(token) = uri_path.strip_prefix("/.well-known/acme-challenge/")
@@ -278,6 +291,11 @@ impl ProxyHttp for NyrunProxy {
         end_of_stream: bool,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<Option<Duration>> {
+        // Track response bytes for all requests
+        if let Some(b) = body {
+            ctx.response_bytes += b.len() as u64;
+        }
+
         if !ctx.should_cache {
             return Ok(None);
         }
@@ -310,7 +328,7 @@ impl ProxyHttp for NyrunProxy {
     async fn logging(
         &self,
         session: &mut Session,
-        _e: Option<&pingora::Error>,
+        e: Option<&pingora::Error>,
         ctx: &mut Self::CTX,
     ) {
         if let Some(m) = &self.metrics {
@@ -330,9 +348,28 @@ impl ProxyHttp for NyrunProxy {
                 .get_or_create(&RequestLabels {
                     method,
                     status,
-                    host,
+                    host: host.clone(),
                 })
                 .inc();
+
+            // Network bytes
+            let host_labels = HostLabels { host: host.clone() };
+            m.network_received_bytes_total
+                .get_or_create(&host_labels)
+                .inc_by(ctx.request_bytes);
+            m.network_sent_bytes_total
+                .get_or_create(&host_labels)
+                .inc_by(ctx.response_bytes);
+
+            // Response size distribution
+            m.response_size_bytes.observe(ctx.response_bytes as f64);
+
+            // Upstream errors
+            if e.is_some() {
+                m.upstream_errors_total
+                    .get_or_create(&host_labels)
+                    .inc();
+            }
         }
     }
 }

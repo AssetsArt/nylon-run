@@ -2263,6 +2263,7 @@ dependencies = [
  "serde_json",
  "shlex",
  "slatedb",
+ "sysinfo",
  "tar",
  "tokio",
  "tracing",

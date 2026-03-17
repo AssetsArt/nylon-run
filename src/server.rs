@@ -41,6 +41,7 @@ pub async fn run_server(state: Arc<Mutex<DaemonState>>) {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             let mut st = state_clone.lock().await;
             st.process_mgr.check_and_restart().await;
+            st.process_mgr.collect_process_stats();
             // Rotate logs every ~60s (30 ticks * 2s)
             tick += 1;
             if tick.is_multiple_of(30) {

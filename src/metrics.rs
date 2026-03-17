@@ -22,6 +22,11 @@ pub struct ProcessLabels {
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, prometheus_client::encoding::EncodeLabelSet)]
+pub struct HostLabels {
+    pub host: String,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq, prometheus_client::encoding::EncodeLabelSet)]
 pub struct CacheLabels {
     pub result: String, // "hit" or "miss"
 }
@@ -34,6 +39,12 @@ pub struct Metrics {
     pub cache_operations_total: Family<CacheLabels, Counter>,
     pub managed_processes: Gauge,
     pub process_restarts_total: Family<ProcessLabels, Counter>,
+    pub process_cpu_usage: Family<ProcessLabels, Gauge>,
+    pub process_memory_bytes: Family<ProcessLabels, Gauge>,
+    pub network_received_bytes_total: Family<HostLabels, Counter>,
+    pub network_sent_bytes_total: Family<HostLabels, Counter>,
+    pub response_size_bytes: Histogram,
+    pub upstream_errors_total: Family<HostLabels, Counter>,
 }
 
 impl Metrics {
@@ -81,6 +92,49 @@ impl Metrics {
             process_restarts_total.clone(),
         );
 
+        let process_cpu_usage = Family::<ProcessLabels, Gauge>::default();
+        registry.register(
+            "nyrun_process_cpu_usage_percent",
+            "CPU usage per process (percentage, 0-100 per core)",
+            process_cpu_usage.clone(),
+        );
+
+        let process_memory_bytes = Family::<ProcessLabels, Gauge>::default();
+        registry.register(
+            "nyrun_process_memory_bytes",
+            "Resident memory per process in bytes",
+            process_memory_bytes.clone(),
+        );
+
+        let network_received_bytes_total = Family::<HostLabels, Counter>::default();
+        registry.register(
+            "nyrun_network_received_bytes",
+            "Total bytes received from clients",
+            network_received_bytes_total.clone(),
+        );
+
+        let network_sent_bytes_total = Family::<HostLabels, Counter>::default();
+        registry.register(
+            "nyrun_network_sent_bytes",
+            "Total bytes sent to clients",
+            network_sent_bytes_total.clone(),
+        );
+
+        let response_size_bytes =
+            Histogram::new(exponential_buckets(256.0, 4.0, 10));
+        registry.register(
+            "nyrun_response_size_bytes",
+            "Response body size distribution in bytes",
+            response_size_bytes.clone(),
+        );
+
+        let upstream_errors_total = Family::<HostLabels, Counter>::default();
+        registry.register(
+            "nyrun_upstream_errors",
+            "Total upstream connection errors",
+            upstream_errors_total.clone(),
+        );
+
         Self {
             http_requests_total,
             http_request_duration_seconds,
@@ -88,6 +142,12 @@ impl Metrics {
             cache_operations_total,
             managed_processes,
             process_restarts_total,
+            process_cpu_usage,
+            process_memory_bytes,
+            network_received_bytes_total,
+            network_sent_bytes_total,
+            response_size_bytes,
+            upstream_errors_total,
         }
     }
 
