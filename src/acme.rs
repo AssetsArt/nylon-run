@@ -1,8 +1,7 @@
 use instant_acme::{
     Account, AccountCredentials, AuthorizationStatus, ChallengeType, Identifier, LetsEncrypt,
-    NewAccount, NewOrder, OrderStatus,
+    NewAccount, NewOrder, OrderStatus, RetryPolicy,
 };
-use rcgen::{CertificateParams, DistinguishedName, KeyPair};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -81,21 +80,25 @@ pub async fn issue_cert(
             .map_err(|e| format!("failed to read account: {e}"))?;
         let creds: AccountCredentials = serde_json::from_str(&creds_json)
             .map_err(|e| format!("failed to parse account: {e}"))?;
-        Account::from_credentials(creds)
+        Account::builder()
+            .map_err(|e| format!("failed to create account builder: {e}"))?
+            .from_credentials(creds)
             .await
             .map_err(|e| format!("failed to load account: {e}"))?
     } else {
-        let (account, creds) = Account::create(
-            &NewAccount {
-                contact: &[&format!("mailto:{email}")],
-                terms_of_service_agreed: true,
-                only_return_existing: false,
-            },
-            LetsEncrypt::Production.url(),
-            None,
-        )
-        .await
-        .map_err(|e| format!("failed to create ACME account: {e}"))?;
+        let (account, creds) = Account::builder()
+            .map_err(|e| format!("failed to create account builder: {e}"))?
+            .create(
+                &NewAccount {
+                    contact: &[&format!("mailto:{email}")],
+                    terms_of_service_agreed: true,
+                    only_return_existing: false,
+                },
+                LetsEncrypt::Production.url().to_string(),
+                None,
+            )
+            .await
+            .map_err(|e| format!("failed to create ACME account: {e}"))?;
 
         // Save account credentials
         std::fs::create_dir_all(CERTS_DIR)
@@ -110,37 +113,25 @@ pub async fn issue_cert(
     // Create order
     let identifier = Identifier::Dns(hostname.to_string());
     let mut order = account
-        .new_order(&NewOrder {
-            identifiers: &[identifier],
-        })
+        .new_order(&NewOrder::new(&[identifier]))
         .await
         .map_err(|e| format!("failed to create order: {e}"))?;
 
-    let state = order.state();
-    if matches!(state.status, OrderStatus::Invalid) {
-        return Err("ACME order is invalid".to_string());
-    }
-
-    // Get authorizations and set up HTTP-01 challenge
-    let authorizations = order
-        .authorizations()
-        .await
-        .map_err(|e| format!("failed to get authorizations: {e}"))?;
-
+    // Process authorizations and set up HTTP-01 challenges
     let mut challenge_tokens = Vec::new();
+    let mut auths = order.authorizations();
+    while let Some(result) = auths.next().await {
+        let mut auth = result.map_err(|e| format!("authorization error: {e}"))?;
 
-    for auth in &authorizations {
         if matches!(auth.status, AuthorizationStatus::Valid) {
             continue;
         }
 
-        let challenge = auth
-            .challenges
-            .iter()
-            .find(|c| c.r#type == ChallengeType::Http01)
+        let mut challenge = auth
+            .challenge(ChallengeType::Http01)
             .ok_or_else(|| "no HTTP-01 challenge found".to_string())?;
 
-        let key_auth = order.key_authorization(challenge);
+        let key_auth = challenge.key_authorization();
         let token = challenge.token.clone();
 
         info!(hostname, token = %token, "setting ACME challenge");
@@ -150,102 +141,52 @@ pub async fn issue_cert(
         challenge_tokens.push(token);
 
         // Tell ACME server we're ready
-        order
-            .set_challenge_ready(&challenge.url)
+        challenge
+            .set_ready()
             .await
             .map_err(|e| format!("failed to set challenge ready: {e}"))?;
     }
 
     // Poll for order to become ready
-    let mut tries = 0;
-    let max_tries = 20;
-    loop {
-        tokio::time::sleep(Duration::from_secs(3)).await;
-        let state = order
-            .refresh()
-            .await
-            .map_err(|e| format!("failed to refresh order: {e}"))?;
+    let retry_policy = RetryPolicy::new()
+        .initial_delay(Duration::from_secs(3))
+        .timeout(Duration::from_secs(60));
 
-        match state.status {
-            OrderStatus::Ready => break,
-            OrderStatus::Valid => break,
-            OrderStatus::Invalid => {
-                // Cleanup challenge tokens
-                for token in &challenge_tokens {
-                    challenge_store.remove(token).await;
+    let status = order
+        .poll_ready(&retry_policy)
+        .await
+        .map_err(|e| {
+            // Cleanup on error
+            let tokens = challenge_tokens.clone();
+            let store = challenge_store.clone();
+            tokio::spawn(async move {
+                for token in &tokens {
+                    store.remove(token).await;
                 }
-                return Err("ACME order became invalid".to_string());
-            }
-            OrderStatus::Pending => {
-                tries += 1;
-                if tries >= max_tries {
-                    for token in &challenge_tokens {
-                        challenge_store.remove(token).await;
-                    }
-                    return Err("ACME order timed out (still pending)".to_string());
-                }
-            }
-            OrderStatus::Processing => {
-                tries += 1;
-                if tries >= max_tries {
-                    for token in &challenge_tokens {
-                        challenge_store.remove(token).await;
-                    }
-                    return Err("ACME order timed out (processing)".to_string());
-                }
-            }
-        }
-    }
+            });
+            format!("order poll_ready failed: {e}")
+        })?;
 
     // Cleanup challenge tokens
     for token in &challenge_tokens {
         challenge_store.remove(token).await;
     }
 
-    // Generate private key and CSR
-    let key_pair = KeyPair::generate().map_err(|e| format!("failed to generate key: {e}"))?;
-    let mut params = CertificateParams::new(vec![hostname.to_string()])
-        .map_err(|e| format!("failed to create cert params: {e}"))?;
-    params.distinguished_name = DistinguishedName::new();
+    if matches!(status, OrderStatus::Invalid) {
+        return Err("ACME order became invalid".to_string());
+    }
 
-    let csr = params
-        .serialize_request(&key_pair)
-        .map_err(|e| format!("failed to create CSR: {e}"))?;
-    let csr_der = csr.der();
-
-    // Finalize order
-    order
-        .finalize(csr_der)
+    // Finalize — this generates key + CSR and submits it
+    let key_pem = order
+        .finalize()
         .await
         .map_err(|e| format!("failed to finalize order: {e}"))?;
 
-    // Wait for certificate
-    let mut tries = 0;
-    loop {
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        let state = order
-            .refresh()
-            .await
-            .map_err(|e| format!("failed to refresh order: {e}"))?;
-        match state.status {
-            OrderStatus::Valid => break,
-            OrderStatus::Invalid => return Err("order became invalid after finalize".to_string()),
-            _ => {
-                tries += 1;
-                if tries >= 10 {
-                    return Err("timed out waiting for certificate".to_string());
-                }
-            }
-        }
-    }
-
+    // Poll for certificate
     let cert_chain_pem = order
-        .certificate()
+        .poll_certificate(&retry_policy)
         .await
-        .map_err(|e| format!("failed to download cert: {e}"))?
-        .ok_or_else(|| "no certificate returned".to_string())?;
-
-    let key_pem = key_pair.serialize_pem();
+        .map_err(|e| format!("failed to get certificate: {e}"))?;
 
     // Save to disk
     std::fs::create_dir_all(&cert_dir)
