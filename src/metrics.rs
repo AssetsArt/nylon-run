@@ -45,6 +45,8 @@ pub struct Metrics {
     pub network_sent_bytes_total: Family<HostLabels, Counter>,
     pub response_size_bytes: Histogram,
     pub upstream_errors_total: Family<HostLabels, Counter>,
+    pub oci_pulls_total: Counter,
+    pub oci_pull_errors_total: Counter,
 }
 
 impl Metrics {
@@ -135,6 +137,20 @@ impl Metrics {
             upstream_errors_total.clone(),
         );
 
+        let oci_pulls_total = Counter::default();
+        registry.register(
+            "nyrun_oci_pulls",
+            "Total OCI image pulls",
+            oci_pulls_total.clone(),
+        );
+
+        let oci_pull_errors_total = Counter::default();
+        registry.register(
+            "nyrun_oci_pull_errors",
+            "Total OCI image pull failures",
+            oci_pull_errors_total.clone(),
+        );
+
         Self {
             http_requests_total,
             http_request_duration_seconds,
@@ -148,6 +164,8 @@ impl Metrics {
             network_sent_bytes_total,
             response_size_bytes,
             upstream_errors_total,
+            oci_pulls_total,
+            oci_pull_errors_total,
         }
     }
 

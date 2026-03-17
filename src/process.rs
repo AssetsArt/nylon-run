@@ -87,8 +87,20 @@ impl ProcessManager {
                 .oci_reference
                 .as_deref()
                 .unwrap_or(&config.path);
-            let extract_dir =
-                crate::oci::pull_and_extract(reference, &config.name).await?;
+            let extract_dir = match crate::oci::pull_and_extract(reference, &config.name).await {
+                Ok(dir) => {
+                    if let Some(m) = &self.metrics {
+                        m.oci_pulls_total.inc();
+                    }
+                    dir
+                }
+                Err(e) => {
+                    if let Some(m) = &self.metrics {
+                        m.oci_pull_errors_total.inc();
+                    }
+                    return Err(e);
+                }
+            };
 
             let (entrypoint, extra_args) = crate::oci::find_entrypoint(&extract_dir)?;
             config.path = entrypoint;
@@ -405,6 +417,10 @@ impl ProcessManager {
         }
 
         Ok(old_config)
+    }
+
+    pub fn metrics(&self) -> Option<&Metrics> {
+        self.metrics.as_ref()
     }
 
     /// Update OCI-specific fields after a new image has been pulled.

@@ -107,6 +107,10 @@ pub enum Request {
     Export,
     Save,
     Kill,
+    Link {
+        api_key: String,
+    },
+    Unlink,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -87,16 +87,16 @@
 - [x] Proxy metrics: request count, latency histograms, status codes, active connections
 - [x] Cache metrics: hit/miss counters
 - [x] Process metrics: CPU/memory per process (sysinfo, collected every 2s)
-- [ ] System metrics: total managed processes, OCI pull stats
+- [x] System metrics: total managed processes, OCI pull stats
 
 ## Backup/Restore
 - [x] `nyrun backup -o <name>` — zip `/var/run/nyrun/`
 - [x] `nyrun restore <file.zip>` — extract zip over `/var/run/nyrun/`
 
 ## Cloud Agent (nyrun side only — cloud UI is a separate private project)
-- [ ] `nyrun link <api-key>` — connect to cloud
-- [ ] `nyrun unlink` — disconnect from cloud
-- [ ] Agent push: metrics, logs, status via WebSocket/gRPC
-- [ ] Persistent outbound connection (no inbound ports needed)
-- [ ] Heartbeat + reconnect with exponential backoff
-- [ ] Receive and execute cloud → agent commands (restart, reload, del, update)
+- [x] `nyrun link <api-key>` — connect to cloud
+- [x] `nyrun unlink` — disconnect from cloud
+- [x] Agent push: metrics, logs, status via WebSocket/gRPC
+- [x] Persistent outbound connection (no inbound ports needed)
+- [x] Heartbeat + reconnect with exponential backoff
+- [x] Receive and execute cloud → agent commands (restart, reload, del, update)

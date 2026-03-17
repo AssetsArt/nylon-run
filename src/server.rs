@@ -7,7 +7,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info};
 
 const SOCK_PATH: &str = "/var/run/nyrun/nyrun.sock";
@@ -17,6 +17,7 @@ pub struct DaemonState {
     pub proxy_mgr: ProxyManager,
     pub acme_configs: Arc<tokio::sync::RwLock<Vec<(String, String)>>>,
     pub state_store: StateStore,
+    pub cloud_shutdown: Option<mpsc::Sender<()>>,
 }
 
 pub async fn run_server(state: Arc<Mutex<DaemonState>>) {
@@ -163,8 +164,51 @@ async fn handle_request(request: Request, state: &Arc<Mutex<DaemonState>>) -> Re
                 Err(e) => Response::Error(e),
             }
         }
+        Request::Link { api_key } => {
+            let mut st = state.lock().await;
+
+            // Save to persistent store
+            if let Err(e) = crate::cloud::save_cloud_config(&st.state_store, &api_key).await {
+                return Response::Error(format!("failed to save cloud config: {e}"));
+            }
+
+            // Stop existing cloud agent if any
+            if let Some(tx) = st.cloud_shutdown.take() {
+                let _ = tx.send(()).await;
+            }
+
+            // Start new cloud agent
+            let agent = crate::cloud::CloudAgent::new(
+                api_key.clone(),
+                crate::cloud::DEFAULT_CLOUD_URL.to_string(),
+            );
+            st.cloud_shutdown = Some(agent.shutdown_handle());
+            let state_clone = Arc::clone(state);
+            tokio::spawn(agent.run(state_clone));
+
+            Response::Ok("linked to cloud".to_string())
+        }
+        Request::Unlink => {
+            let mut st = state.lock().await;
+
+            // Stop cloud agent
+            if let Some(tx) = st.cloud_shutdown.take() {
+                let _ = tx.send(()).await;
+            }
+
+            // Remove from persistent store
+            if let Err(e) = crate::cloud::remove_cloud_config(&st.state_store).await {
+                return Response::Error(format!("failed to remove cloud config: {e}"));
+            }
+
+            Response::Ok("unlinked from cloud".to_string())
+        }
         Request::Kill => {
             let mut st = state.lock().await;
+            // Stop cloud agent
+            if let Some(tx) = st.cloud_shutdown.take() {
+                let _ = tx.send(()).await;
+            }
             let msg = st.process_mgr.kill_all().await;
             let _ = st.state_store.save(&[]).await;
             st.state_store.close().await;
@@ -189,11 +233,26 @@ async fn handle_update(
             return Response::Error(format!("'{}' is not a valid OCI image reference", img_ref));
         }
         match crate::oci::pull_and_extract(img_ref, &name).await {
-            Ok(extract_dir) => match crate::oci::find_entrypoint(&extract_dir) {
-                Ok((entrypoint, extra_args)) => Some((img_ref.clone(), entrypoint, extra_args)),
-                Err(e) => return Response::Error(format!("OCI entrypoint error: {e}")),
-            },
-            Err(e) => return Response::Error(format!("OCI pull failed: {e}")),
+            Ok(extract_dir) => {
+                // Record OCI pull success metric
+                if let Ok(st) = state.try_lock() {
+                    if let Some(m) = st.process_mgr.metrics() {
+                        m.oci_pulls_total.inc();
+                    }
+                }
+                match crate::oci::find_entrypoint(&extract_dir) {
+                    Ok((entrypoint, extra_args)) => Some((img_ref.clone(), entrypoint, extra_args)),
+                    Err(e) => return Response::Error(format!("OCI entrypoint error: {e}")),
+                }
+            }
+            Err(e) => {
+                if let Ok(st) = state.try_lock() {
+                    if let Some(m) = st.process_mgr.metrics() {
+                        m.oci_pull_errors_total.inc();
+                    }
+                }
+                return Response::Error(format!("OCI pull failed: {e}"));
+            }
         }
     } else {
         None

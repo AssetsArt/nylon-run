@@ -3,6 +3,21 @@ use tokio::net::UnixStream;
 
 const SOCK_PATH: &str = "/var/run/nyrun/nyrun.sock";
 
+/// Send a request to the daemon via Unix socket (for use within daemon process, e.g. cloud agent).
+pub async fn send_request_local(request: Request) -> Result<Response, String> {
+    let mut stream = UnixStream::connect(SOCK_PATH)
+        .await
+        .map_err(|e| format!("failed to connect to daemon: {e}"))?;
+
+    protocol::write_message(&mut stream, &request)
+        .await
+        .map_err(|e| format!("failed to send request: {e}"))?;
+
+    protocol::read_message(&mut stream)
+        .await
+        .map_err(|e| format!("failed to read response: {e}"))
+}
+
 pub async fn send_request(request: Request) -> Result<Response, String> {
     crate::daemon::ensure_daemon()?;
 

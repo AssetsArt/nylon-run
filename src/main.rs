@@ -1,6 +1,7 @@
 mod acme;
 mod cli;
 mod client;
+mod cloud;
 mod daemon;
 mod metrics;
 mod oci;
@@ -553,11 +554,11 @@ async fn main() {
         },
 
         Command::Link { api_key } => {
-            println!("link not yet implemented (key: {api_key})");
+            client::execute(Request::Link { api_key }).await;
         }
 
         Command::Unlink => {
-            println!("unlink not yet implemented");
+            client::execute(Request::Unlink).await;
         }
     }
 }

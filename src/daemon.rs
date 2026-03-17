@@ -122,6 +122,7 @@ pub async fn run_daemon() {
         proxy_mgr,
         acme_configs,
         state_store,
+        cloud_shutdown: None,
     }));
 
     if !saved.is_empty() {
@@ -131,6 +132,20 @@ pub async fn run_daemon() {
             .process_mgr
             .restore_processes(saved)
             .await;
+    }
+
+    // Restore cloud agent connection if configured
+    {
+        let st = daemon_state.lock().await;
+        if let Some((api_key, url)) = crate::cloud::load_cloud_config(&st.state_store).await {
+            info!("restoring cloud agent connection");
+            let agent = crate::cloud::CloudAgent::new(api_key, url);
+            let shutdown_handle = agent.shutdown_handle();
+            let state_clone = Arc::clone(&daemon_state);
+            tokio::spawn(agent.run(state_clone));
+            drop(st);
+            daemon_state.lock().await.cloud_shutdown = Some(shutdown_handle);
+        }
     }
 
     info!("daemon started (pid: {})", std::process::id());

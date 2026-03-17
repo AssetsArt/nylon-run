@@ -97,6 +97,30 @@ impl StateStore {
         configs
     }
 
+    pub async fn put(&self, key: &str, value: &str) -> Result<(), String> {
+        self.db
+            .put(key.as_bytes(), value.as_bytes())
+            .await
+            .map_err(|e| format!("put error: {e}"))?;
+        self.db.flush().await.map_err(|e| format!("flush error: {e}"))?;
+        Ok(())
+    }
+
+    pub async fn get(&self, key: &str) -> Option<String> {
+        match self.db.get(key.as_bytes()).await {
+            Ok(Some(val)) => String::from_utf8(val.to_vec()).ok(),
+            _ => None,
+        }
+    }
+
+    pub async fn delete(&self, key: &str) -> Result<(), String> {
+        self.db
+            .delete(key.as_bytes())
+            .await
+            .map_err(|e| format!("delete error: {e}"))?;
+        Ok(())
+    }
+
     pub async fn close(&self) {
         if let Err(e) = self.db.close().await {
             error!(error = %e, "failed to close SlateDB");
