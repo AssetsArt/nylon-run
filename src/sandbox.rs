@@ -5,7 +5,6 @@
 /// - `--allow PATHS`: whitelists directories when io is denied
 ///
 /// Linux only. On other platforms, returns an error if deny is non-empty.
-
 #[cfg(target_os = "linux")]
 mod linux {
     use landlock::{
@@ -15,7 +14,6 @@ mod linux {
     use nix::libc;
     use seccompiler::{BpfProgram, SeccompAction, SeccompFilter, SeccompRule};
     use std::collections::BTreeMap;
-    use std::os::unix::io::AsRawFd;
     use tracing::{info, warn};
 
     const LANDLOCK_ABI: ABI = ABI::V3;
@@ -23,10 +21,6 @@ mod linux {
     /// Apply network denial via seccomp-BPF.
     /// Must be called in the child process before exec.
     pub fn apply_deny_net() -> Result<(), String> {
-        use seccompiler::SeccompCmpArgLen::*;
-        use seccompiler::SeccompCmpOp::*;
-        use seccompiler::SeccompCondition;
-
         // Block socket-related syscalls
         let blocked_syscalls: Vec<i64> = vec![
             libc::SYS_socket,
@@ -52,7 +46,9 @@ mod linux {
             rules,
             SeccompAction::Allow, // default: allow everything
             SeccompAction::Errno(libc::EPERM as u32), // matched syscalls: EPERM
-            std::env::consts::ARCH.into(),
+            std::env::consts::ARCH
+                .try_into()
+                .map_err(|e| format!("unsupported arch: {e}"))?,
         )
         .map_err(|e| format!("seccomp filter error: {e}"))?;
 
