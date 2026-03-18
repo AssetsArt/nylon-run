@@ -115,6 +115,10 @@ pub enum Request {
         api_key: String,
     },
     Unlink,
+    MetricsEnable {
+        port: u16,
+    },
+    MetricsDisable,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

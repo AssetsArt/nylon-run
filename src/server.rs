@@ -18,6 +18,8 @@ pub struct DaemonState {
     pub acme_configs: Arc<tokio::sync::RwLock<Vec<(String, String)>>>,
     pub state_store: StateStore,
     pub cloud_shutdown: Option<mpsc::Sender<()>>,
+    pub metrics_registry: Arc<prometheus_client::registry::Registry>,
+    pub metrics_shutdown: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 pub async fn run_server(state: Arc<Mutex<DaemonState>>) {
@@ -214,10 +216,40 @@ async fn handle_request(request: Request, state: &Arc<Mutex<DaemonState>>) -> Re
             if let Some(tx) = st.cloud_shutdown.take() {
                 let _ = tx.send(()).await;
             }
+            // Stop metrics server
+            if let Some(tx) = st.metrics_shutdown.take() {
+                let _ = tx.send(());
+            }
             let msg = st.process_mgr.kill_all().await;
             let _ = st.state_store.save(&[]).await;
             st.state_store.close().await;
             Response::Ok(msg)
+        }
+        Request::MetricsEnable { port } => {
+            let mut st = state.lock().await;
+            // Stop existing metrics server if running
+            if let Some(tx) = st.metrics_shutdown.take() {
+                let _ = tx.send(());
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+            let registry = Arc::clone(&st.metrics_registry);
+            let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+            st.metrics_shutdown = Some(shutdown_tx);
+            tokio::spawn(crate::metrics::serve_metrics_with_shutdown(
+                port,
+                registry,
+                shutdown_rx,
+            ));
+            Response::Ok(format!("metrics server started on :{port}"))
+        }
+        Request::MetricsDisable => {
+            let mut st = state.lock().await;
+            if let Some(tx) = st.metrics_shutdown.take() {
+                let _ = tx.send(());
+                Response::Ok("metrics server stopped".to_string())
+            } else {
+                Response::Ok("metrics server is not running".to_string())
+            }
         }
     }
 }

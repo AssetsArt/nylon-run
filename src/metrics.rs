@@ -184,8 +184,12 @@ impl Metrics {
     }
 }
 
-/// Start a lightweight HTTP server that serves /metrics
-pub async fn serve_metrics(port: u16, registry: Arc<Registry>) {
+/// Start a metrics HTTP server that can be stopped via a oneshot channel.
+pub async fn serve_metrics_with_shutdown(
+    port: u16,
+    registry: Arc<Registry>,
+    shutdown: tokio::sync::oneshot::Receiver<()>,
+) {
     let listener = match TcpListener::bind(format!("0.0.0.0:{}", port)).await {
         Ok(l) => l,
         Err(e) => {
@@ -196,34 +200,40 @@ pub async fn serve_metrics(port: u16, registry: Arc<Registry>) {
 
     info!(port, "metrics server listening");
 
-    loop {
-        let (mut stream, _) = match listener.accept().await {
-            Ok(s) => s,
-            Err(e) => {
-                error!(error = %e, "metrics accept error");
-                continue;
+    tokio::select! {
+        _ = shutdown => {
+            info!(port, "metrics server stopped");
+        }
+        _ = async {
+            loop {
+                let (mut stream, _) = match listener.accept().await {
+                    Ok(s) => s,
+                    Err(e) => {
+                        error!(error = %e, "metrics accept error");
+                        continue;
+                    }
+                };
+
+                let registry = Arc::clone(&registry);
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 1024];
+                    let _ = tokio::io::AsyncReadExt::read(&mut stream, &mut buf).await;
+
+                    let mut body = String::new();
+                    if encode(&mut body, &registry).is_err() {
+                        let resp = "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n";
+                        let _ = stream.write_all(resp.as_bytes()).await;
+                        return;
+                    }
+
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/openmetrics-text; version=1.0.0; charset=utf-8\r\nContent-Length: {}\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(resp.as_bytes()).await;
+                });
             }
-        };
-
-        let registry = Arc::clone(&registry);
-        tokio::spawn(async move {
-            // Read the request (we don't actually parse it, just drain it)
-            let mut buf = [0u8; 1024];
-            let _ = tokio::io::AsyncReadExt::read(&mut stream, &mut buf).await;
-
-            let mut body = String::new();
-            if encode(&mut body, &registry).is_err() {
-                let resp = "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n";
-                let _ = stream.write_all(resp.as_bytes()).await;
-                return;
-            }
-
-            let resp = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/openmetrics-text; version=1.0.0; charset=utf-8\r\nContent-Length: {}\r\n\r\n{}",
-                body.len(),
-                body
-            );
-            let _ = stream.write_all(resp.as_bytes()).await;
-        });
+        } => {}
     }
 }

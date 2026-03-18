@@ -662,6 +662,15 @@ async fn main() {
         Command::Unlink => {
             client::execute(Request::Unlink).await;
         }
+
+        Command::Metrics { action } => match action {
+            cli::MetricsAction::Enable { port } => {
+                client::execute(Request::MetricsEnable { port }).await;
+            }
+            cli::MetricsAction::Disable => {
+                client::execute(Request::MetricsDisable).await;
+            }
+        },
     }
 }
 

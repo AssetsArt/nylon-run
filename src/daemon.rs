@@ -1,5 +1,5 @@
 use crate::acme::ChallengeStore;
-use crate::metrics::{self, Metrics};
+use crate::metrics::Metrics;
 use crate::process::ProcessManager;
 use crate::proxy::ProxyManager;
 use crate::server::DaemonState;
@@ -66,8 +66,6 @@ pub fn ensure_daemon() -> Result<(), String> {
     spawn_daemon()
 }
 
-const METRICS_PORT: u16 = 9090;
-
 pub async fn run_daemon() {
     ensure_dirs();
     write_pid();
@@ -75,12 +73,6 @@ pub async fn run_daemon() {
     let mut registry = Registry::default();
     let metrics = Metrics::new_registered(&mut registry);
     let registry = Arc::new(registry);
-
-    // Start metrics server
-    let registry_clone = Arc::clone(&registry);
-    tokio::spawn(async move {
-        metrics::serve_metrics(METRICS_PORT, registry_clone).await;
-    });
 
     let challenge_store = ChallengeStore::default();
     let acme_configs = Arc::new(tokio::sync::RwLock::new(Vec::new()));
@@ -123,6 +115,8 @@ pub async fn run_daemon() {
         acme_configs,
         state_store,
         cloud_shutdown: None,
+        metrics_registry: Arc::clone(&registry),
+        metrics_shutdown: None,
     }));
 
     if !saved.is_empty() {

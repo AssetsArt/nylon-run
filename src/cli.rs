@@ -136,7 +136,25 @@ pub enum Command {
     },
     /// Disconnect from cloud UI
     Unlink,
+    /// Enable Prometheus metrics server
+    #[command(name = "metrics")]
+    Metrics {
+        #[command(subcommand)]
+        action: MetricsAction,
+    },
     /// (internal) Run as daemon — not user-facing
     #[command(hide = true)]
     Daemon,
+}
+
+#[derive(Subcommand)]
+pub enum MetricsAction {
+    /// Start metrics server on specified port (default: 9090)
+    Enable {
+        /// Port to listen on
+        #[arg(long, default_value = "9090")]
+        port: u16,
+    },
+    /// Stop metrics server
+    Disable,
 }
