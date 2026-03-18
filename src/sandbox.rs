@@ -9,13 +9,11 @@
 #[cfg(target_os = "linux")]
 mod linux {
     use landlock::{
-        Access, AccessFs, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr,
-        RulesetStatus, ABI,
+        ABI, Access, AccessFs, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr,
+        RulesetStatus,
     };
     use nix::libc;
-    use seccompiler::{
-        BpfProgram, SeccompAction, SeccompFilter, SeccompRule,
-    };
+    use seccompiler::{BpfProgram, SeccompAction, SeccompFilter, SeccompRule};
     use std::collections::BTreeMap;
     use std::os::unix::io::AsRawFd;
     use tracing::{info, warn};
@@ -44,12 +42,15 @@ mod linux {
 
         let mut rules: BTreeMap<i64, Vec<SeccompRule>> = BTreeMap::new();
         for syscall in blocked_syscalls {
-            rules.insert(syscall, vec![SeccompRule::new(vec![]).map_err(|e| format!("seccomp rule error: {e}"))?]);
+            rules.insert(
+                syscall,
+                vec![SeccompRule::new(vec![]).map_err(|e| format!("seccomp rule error: {e}"))?],
+            );
         }
 
         let filter = SeccompFilter::new(
             rules,
-            SeccompAction::Allow,  // default: allow everything
+            SeccompAction::Allow, // default: allow everything
             SeccompAction::Errno(libc::EPERM as u32), // matched syscalls: EPERM
             std::env::consts::ARCH.into(),
         )
@@ -59,8 +60,7 @@ mod linux {
             .try_into()
             .map_err(|e| format!("seccomp compile error: {e}"))?;
 
-        seccompiler::apply_filter(&bpf)
-            .map_err(|e| format!("seccomp apply error: {e}"))?;
+        seccompiler::apply_filter(&bpf).map_err(|e| format!("seccomp apply error: {e}"))?;
 
         info!("seccomp network deny applied");
         Ok(())
@@ -98,21 +98,24 @@ mod linux {
 
         for dir in system_read_dirs {
             if let Ok(fd) = PathFd::new(dir) {
-                ruleset = ruleset.add_rule(PathBeneath::new(fd, read_access))
+                ruleset = ruleset
+                    .add_rule(PathBeneath::new(fd, read_access))
                     .map_err(|e| format!("landlock add rule error: {e}"))?;
             }
         }
 
         // Allow full access to working directory
         if let Ok(fd) = PathFd::new(working_dir) {
-            ruleset = ruleset.add_rule(PathBeneath::new(fd, full_access))
+            ruleset = ruleset
+                .add_rule(PathBeneath::new(fd, full_access))
                 .map_err(|e| format!("landlock add rule error: {e}"))?;
         }
 
         // Allow full access to explicitly allowed paths
         for path in allowed_paths {
             if let Ok(fd) = PathFd::new(path) {
-                ruleset = ruleset.add_rule(PathBeneath::new(fd, full_access))
+                ruleset = ruleset
+                    .add_rule(PathBeneath::new(fd, full_access))
                     .map_err(|e| format!("landlock add rule error: {e}"))?;
             } else {
                 warn!(path, "allowed path not found, skipping");
@@ -121,13 +124,15 @@ mod linux {
 
         // Always allow access to nyrun logs directory
         if let Ok(fd) = PathFd::new("/var/run/nyrun/logs") {
-            ruleset = ruleset.add_rule(PathBeneath::new(fd, full_access))
+            ruleset = ruleset
+                .add_rule(PathBeneath::new(fd, full_access))
                 .map_err(|e| format!("landlock add rule error: {e}"))?;
         }
 
         // Allow /tmp for temporary files
         if let Ok(fd) = PathFd::new("/tmp") {
-            ruleset = ruleset.add_rule(PathBeneath::new(fd, full_access))
+            ruleset = ruleset
+                .add_rule(PathBeneath::new(fd, full_access))
                 .map_err(|e| format!("landlock add rule error: {e}"))?;
         }
 
@@ -137,7 +142,9 @@ mod linux {
 
         match status.ruleset {
             RulesetStatus::FullyEnforced => info!("landlock filesystem deny fully enforced"),
-            RulesetStatus::PartiallyEnforced => warn!("landlock filesystem deny partially enforced"),
+            RulesetStatus::PartiallyEnforced => {
+                warn!("landlock filesystem deny partially enforced")
+            }
             RulesetStatus::NotEnforced => warn!("landlock not supported on this kernel"),
         }
 

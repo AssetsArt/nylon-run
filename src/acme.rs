@@ -54,8 +54,8 @@ pub async fn issue_cert(
         && let Ok(cert) = openssl::x509::X509::from_pem(&cert_pem)
     {
         let not_after = cert.not_after();
-        let now = openssl::asn1::Asn1Time::days_from_now(0)
-            .map_err(|e| format!("time error: {e}"))?;
+        let now =
+            openssl::asn1::Asn1Time::days_from_now(0).map_err(|e| format!("time error: {e}"))?;
         let renew_at = openssl::asn1::Asn1Time::days_from_now(RENEW_BEFORE_DAYS as u32)
             .map_err(|e| format!("time error: {e}"))?;
 
@@ -63,7 +63,11 @@ pub async fn issue_cert(
             // Cert is still valid, just load it
             info!(hostname, "existing ACME cert still valid, loading");
             cert_store
-                .add_cert(hostname, cert_path.to_str().unwrap(), key_path.to_str().unwrap())
+                .add_cert(
+                    hostname,
+                    cert_path.to_str().unwrap(),
+                    key_path.to_str().unwrap(),
+                )
                 .await?;
             return Ok(());
         }
@@ -152,20 +156,17 @@ pub async fn issue_cert(
         .initial_delay(Duration::from_secs(3))
         .timeout(Duration::from_secs(60));
 
-    let status = order
-        .poll_ready(&retry_policy)
-        .await
-        .map_err(|e| {
-            // Cleanup on error
-            let tokens = challenge_tokens.clone();
-            let store = challenge_store.clone();
-            tokio::spawn(async move {
-                for token in &tokens {
-                    store.remove(token).await;
-                }
-            });
-            format!("order poll_ready failed: {e}")
-        })?;
+    let status = order.poll_ready(&retry_policy).await.map_err(|e| {
+        // Cleanup on error
+        let tokens = challenge_tokens.clone();
+        let store = challenge_store.clone();
+        tokio::spawn(async move {
+            for token in &tokens {
+                store.remove(token).await;
+            }
+        });
+        format!("order poll_ready failed: {e}")
+    })?;
 
     // Cleanup challenge tokens
     for token in &challenge_tokens {
@@ -189,8 +190,7 @@ pub async fn issue_cert(
         .map_err(|e| format!("failed to get certificate: {e}"))?;
 
     // Save to disk
-    std::fs::create_dir_all(&cert_dir)
-        .map_err(|e| format!("failed to create cert dir: {e}"))?;
+    std::fs::create_dir_all(&cert_dir).map_err(|e| format!("failed to create cert dir: {e}"))?;
     std::fs::write(&cert_path, &cert_chain_pem)
         .map_err(|e| format!("failed to write cert: {e}"))?;
     std::fs::write(&key_path, &key_pem).map_err(|e| format!("failed to write key: {e}"))?;

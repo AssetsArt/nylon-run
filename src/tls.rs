@@ -74,8 +74,8 @@ impl DynamicCertStore {
     ) -> Result<(), String> {
         let certs = X509::stack_from_pem(cert_pem)
             .map_err(|e| format!("failed to parse cert chain: {e}"))?;
-        let key = PKey::private_key_from_pem(key_pem)
-            .map_err(|e| format!("failed to parse key: {e}"))?;
+        let key =
+            PKey::private_key_from_pem(key_pem).map_err(|e| format!("failed to parse key: {e}"))?;
 
         let cert = certs
             .first()
