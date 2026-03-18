@@ -18,11 +18,6 @@
 
 Managing production services usually means juggling multiple tools — a process manager, a reverse proxy, TLS certificates, and monitoring dashboards. **Nylon Run combines all of that into a single binary** with zero config files. Everything is driven by CLI commands and persisted automatically.
 
-- No YAML/JSON config to maintain
-- No separate Nginx/Caddy setup
-- No manual certificate management
-- Works with **any** language or binary
-
 ## Features
 
 - **Process Manager** — spawn, monitor, auto-restart on crash, log capture
