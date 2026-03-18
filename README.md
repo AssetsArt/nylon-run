@@ -8,7 +8,7 @@
 [![CI](https://github.com/AssetsArt/nylon-run/actions/workflows/ci.yml/badge.svg)](https://github.com/AssetsArt/nylon-run/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-MIT-green)](#)
 
-*A language-agnostic process manager and reverse proxy — like PM2, but built in Rust with Pingora.*
+*A language-agnostic process manager and reverse proxy built in Rust with Pingora.*
 
 [Why Nylon Run?](#why-nylon-run) • [Features](#features) • [Install](#installation) • [Usage](#usage) • [Ecosystem File](#ecosystem-file)
 

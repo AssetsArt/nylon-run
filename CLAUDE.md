@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-nylon-run (`nyrun`) — a Rust process manager and reverse proxy, similar to PM2 but language-agnostic. Built on Pingora (Cloudflare's proxy framework) with SlateDB for persistent state. No config files — everything is driven by CLI commands.
+nylon-run (`nyrun`) — a language-agnostic process manager and reverse proxy. Built in Rust on Pingora (Cloudflare's proxy framework) with SlateDB for persistent state. No config files — everything is driven by CLI commands.
 
 ## Build & Run Commands
 
@@ -35,7 +35,7 @@ nyrun run ./xxx --deny io --allow /tmp/data,/var/log --p 80:8000  # deny I/O exc
 nyrun run ./xxx --deny net                        # process-only with network denied
 nyrun run ghcr.io/xx/xx:latest --p 8081:8081     # pull OCI image, isolated to its own folder by default
 nyrun run ghcr.io/xx/xx:latest --allow all --p 8081:8081  # OCI but allow full filesystem access
-nyrun start ecosystem.json                        # start all apps from config file (like PM2)
+nyrun start ecosystem.yaml                        # start all apps from config file
 nyrun start ecosystem.json --only api             # start only one app from config
 nyrun ls                                          # list all managed processes with status
 nyrun del <name>                                  # stop and remove a process
