@@ -44,6 +44,10 @@ pub struct ProcessConfig {
     pub oci_reference: Option<String>,
     #[serde(default)]
     pub pid_file: Option<String>,
+    /// Volume mounts: map host files/dirs into the process working directory.
+    /// Format: "host_path:container_path"
+    #[serde(default)]
+    pub volumes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

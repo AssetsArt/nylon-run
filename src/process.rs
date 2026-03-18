@@ -129,6 +129,53 @@ impl ProcessManager {
             );
         }
 
+        // Mount volumes: copy host files/dirs into the process working directory
+        if !config.volumes.is_empty() {
+            let work_dir = if config.is_oci {
+                std::path::PathBuf::from(format!("/var/run/nyrun/oci/{}", config.name))
+            } else {
+                std::path::Path::new(&config.path)
+                    .parent()
+                    .unwrap_or(std::path::Path::new("/"))
+                    .to_path_buf()
+            };
+
+            for vol in &config.volumes {
+                let parts: Vec<&str> = vol.splitn(2, ':').collect();
+                if parts.len() != 2 {
+                    return Err(format!(
+                        "invalid volume mount '{}': expected host_path:container_path",
+                        vol
+                    ));
+                }
+                let host_path = std::path::Path::new(parts[0]);
+                let container_path = work_dir.join(parts[1].trim_start_matches('/'));
+
+                if !host_path.exists() {
+                    return Err(format!("volume source '{}' does not exist", parts[0]));
+                }
+
+                // Create parent directories
+                if let Some(parent) = container_path.parent() {
+                    std::fs::create_dir_all(parent)
+                        .map_err(|e| format!("failed to create dir for volume mount: {e}"))?;
+                }
+
+                if host_path.is_dir() {
+                    copy_dir_recursive(host_path, &container_path)?;
+                } else {
+                    std::fs::copy(host_path, &container_path)
+                        .map_err(|e| format!("failed to copy volume '{}': {e}", vol))?;
+                }
+
+                info!(
+                    src = parts[0],
+                    dest = %container_path.display(),
+                    "volume mounted"
+                );
+            }
+        }
+
         let mut cmd = Command::new(&config.path);
         cmd.args(&config.args);
 
@@ -569,4 +616,24 @@ async fn capture_output<R: tokio::io::AsyncRead + Unpin>(reader: R, log_path: Pa
         let timestamped = format!("[{}] {}\n", Utc::now().format("%Y-%m-%d %H:%M:%S"), line);
         let _ = file.write_all(timestamped.as_bytes()).await;
     }
+}
+
+/// Recursively copy a directory.
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
+    std::fs::create_dir_all(dst)
+        .map_err(|e| format!("failed to create dir '{}': {e}", dst.display()))?;
+    for entry in std::fs::read_dir(src)
+        .map_err(|e| format!("failed to read dir '{}': {e}", src.display()))?
+    {
+        let entry = entry.map_err(|e| format!("dir entry error: {e}"))?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path)
+                .map_err(|e| format!("failed to copy '{}': {e}", src_path.display()))?;
+        }
+    }
+    Ok(())
 }

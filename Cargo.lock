@@ -2449,6 +2449,7 @@ dependencies = [
  "seccompiler",
  "serde",
  "serde_json",
+ "serde_yaml",
  "shlex",
  "slatedb",
  "sysinfo 0.38.4",

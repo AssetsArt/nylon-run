@@ -61,9 +61,9 @@ pub enum Command {
         #[arg(long)]
         allow: Option<String>,
     },
-    /// Start processes from a config file (like PM2 ecosystem)
+    /// Start processes from a config file (YAML or JSON)
     Start {
-        /// Path to config file (JSON)
+        /// Path to config file (YAML default, JSON if .json extension)
         file: String,
         /// Start only this app by name
         #[arg(long)]

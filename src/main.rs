@@ -154,6 +154,9 @@ struct AppEntry {
     allow: Option<String>,
     #[serde(default)]
     pid_file: Option<String>,
+    /// Volume mounts: "host_path:container_path"
+    #[serde(default)]
+    volumes: Vec<String>,
 }
 
 fn app_entry_to_config(app: &AppEntry) -> Result<ProcessConfig, String> {
@@ -209,6 +212,7 @@ fn app_entry_to_config(app: &AppEntry) -> Result<ProcessConfig, String> {
         is_oci,
         oci_reference,
         pid_file: app.pid_file.clone(),
+        volumes: app.volumes.clone(),
     })
 }
 
@@ -272,6 +276,7 @@ fn config_to_app_entry(c: &ProcessConfig) -> AppEntry {
         deny,
         allow,
         pid_file: c.pid_file.clone(),
+        volumes: c.volumes.clone(),
     }
 }
 
@@ -336,6 +341,7 @@ async fn main() {
                 is_oci,
                 oci_reference,
                 pid_file: None,
+                volumes: Vec::new(),
             };
 
             client::execute(Request::Bin { config }).await;
@@ -401,6 +407,7 @@ async fn main() {
                 is_oci,
                 oci_reference,
                 pid_file: None,
+                volumes: Vec::new(),
             };
 
             client::execute(Request::Run { config }).await;
@@ -415,11 +422,22 @@ async fn main() {
                 }
             };
 
-            let config_file: ConfigFile = match serde_json::from_str(&content) {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!("error: invalid config file: {e}");
-                    std::process::exit(1);
+            let config_file: ConfigFile = if file.ends_with(".json") {
+                match serde_json::from_str(&content) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("error: invalid JSON config: {e}");
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                // Default to YAML (supports .yml, .yaml, or any other extension)
+                match serde_yaml::from_str(&content) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("error: invalid YAML config: {e}");
+                        std::process::exit(1);
+                    }
                 }
             };
 
@@ -507,16 +525,16 @@ async fn main() {
             Ok(protocol::Response::ConfigList(configs)) => {
                 let apps: Vec<AppEntry> = configs.iter().map(config_to_app_entry).collect();
                 let file = ConfigFile { apps };
-                let json = serde_json::to_string_pretty(&file).unwrap();
+                let output = serde_yaml::to_string(&file).unwrap();
                 match o {
                     Some(path) => {
-                        if let Err(e) = std::fs::write(&path, &json) {
+                        if let Err(e) = std::fs::write(&path, &output) {
                             eprintln!("error: failed to write '{}': {e}", path);
                             std::process::exit(1);
                         }
                         println!("exported to {path}");
                     }
-                    None => println!("{json}"),
+                    None => println!("{output}"),
                 }
             }
             Ok(protocol::Response::Error(e)) => eprintln!("error: {e}"),

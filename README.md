@@ -141,35 +141,54 @@ nyrun link <api-key>        # connect to cloud UI
 nyrun unlink                # disconnect
 ```
 
-## Ecosystem File
+## Config File
 
-Start multiple apps from a single JSON config (like PM2):
+Start multiple apps from a single YAML config (JSON also supported):
 
 ```bash
-nyrun start ecosystem.json
-nyrun start ecosystem.json --only api
+nyrun start ecosystem.yaml
+nyrun start ecosystem.yaml --only api
 ```
 
-```json
-{
-  "apps": [
-    {
-      "name": "api",
-      "path": "./api-server",
-      "port": "api.example.com:443:8000",
-      "args": "--verbose",
-      "env_file": ".env",
-      "env": { "NODE_ENV": "production" },
-      "acme": "user@example.com"
-    },
-    {
-      "name": "worker",
-      "path": "./worker",
-      "deny": "net"
-    }
-  ]
-}
+```yaml
+apps:
+  - name: api
+    path: ./api-server
+    port: "api.example.com:443:8000"
+    args: "--verbose"
+    env_file: .env
+    env:
+      NODE_ENV: production
+    acme: user@example.com
+
+  - name: redis
+    path: redis:7
+    port: "6379:6379"
+
+  - name: nginx
+    path: nginx:latest
+    port: "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+      - ./html:/usr/share/nginx/html
+
+  - name: worker
+    path: ./worker
+    deny: net
 ```
+
+### Volume Mounts
+
+Map host files or directories into the process working directory (like Kubernetes `volumeMounts`):
+
+```yaml
+volumes:
+  - ./my-config.yaml:/etc/app/config.yaml    # single file
+  - ./templates:/app/templates                 # directory
+  - /host/path:/container/path                 # absolute path
+```
+
+Files are copied into the process working directory before the process starts. For OCI images, volumes are mounted into the extraction directory (`/var/run/nyrun/oci/<name>/`).
 
 ## Architecture
 
