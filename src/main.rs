@@ -125,11 +125,20 @@ fn derive_name(path: &str, name: &Option<String>) -> String {
 
 // --- Config file types (k8s-style manifests for `nyrun start`) ---
 
+const CONFIGMAP_DIR: &str = "/var/run/nyrun/configmaps";
+
 #[derive(Serialize, Deserialize)]
-struct Manifest {
+struct ProcessManifest {
     kind: String,
     metadata: ManifestMetadata,
     spec: ManifestSpec,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ConfigMapManifest {
+    kind: String,
+    metadata: ManifestMetadata,
+    data: HashMap<String, String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -164,11 +173,42 @@ struct ManifestSpec {
     volumes: Vec<String>,
 }
 
-fn manifest_to_config(m: &Manifest) -> Result<ProcessConfig, String> {
-    if m.kind != "Process" {
-        return Err(format!("unknown kind '{}', expected 'Process'", m.kind));
+/// Write ConfigMap data files to /var/run/nyrun/configmaps/<name>/
+fn write_configmap(name: &str, data: &HashMap<String, String>) -> Result<(), String> {
+    let dir = std::path::Path::new(CONFIGMAP_DIR).join(name);
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("failed to create configmap dir '{}': {e}", dir.display()))?;
+    for (filename, content) in data {
+        let path = dir.join(filename);
+        std::fs::write(&path, content)
+            .map_err(|e| format!("failed to write configmap file '{}': {e}", path.display()))?;
     }
+    Ok(())
+}
 
+/// Resolve volume entries that reference configmaps.
+/// "configmap:game-config:/etc/config" → "/var/run/nyrun/configmaps/game-config:/etc/config"
+fn resolve_configmap_volumes(volumes: &[String]) -> Vec<String> {
+    volumes
+        .iter()
+        .map(|v| {
+            if let Some(rest) = v.strip_prefix("configmap:") {
+                // rest = "name:/dest/path"
+                if let Some(colon) = rest.find(':') {
+                    let cm_name = &rest[..colon];
+                    let dest = &rest[colon..]; // includes the ':'
+                    format!("{}/{}{}", CONFIGMAP_DIR, cm_name, dest)
+                } else {
+                    v.clone()
+                }
+            } else {
+                v.clone()
+            }
+        })
+        .collect()
+}
+
+fn manifest_to_config(m: &ProcessManifest) -> Result<ProcessConfig, String> {
     let spec = &m.spec;
     let env_vars = match (&spec.env_file, &spec.env) {
         (Some(ef), Some(extra)) => {
@@ -227,11 +267,11 @@ fn manifest_to_config(m: &Manifest) -> Result<ProcessConfig, String> {
         is_oci,
         oci_reference,
         pid_file: spec.pid_file.clone(),
-        volumes: spec.volumes.clone(),
+        volumes: resolve_configmap_volumes(&spec.volumes),
     })
 }
 
-fn config_to_manifest(c: &ProcessConfig) -> Manifest {
+fn config_to_manifest(c: &ProcessConfig) -> ProcessManifest {
     let port = c.port_mapping.as_ref().map(|pm| {
         if let Some(ref host) = pm.host {
             format!(
@@ -278,7 +318,7 @@ fn config_to_manifest(c: &ProcessConfig) -> Manifest {
         Some(c.allow.join(","))
     };
 
-    Manifest {
+    ProcessManifest {
         kind: "Process".to_string(),
         metadata: ManifestMetadata {
             name: c.name.clone(),
@@ -442,31 +482,70 @@ async fn main() {
                 }
             };
 
-            // Parse multi-document YAML (--- separated) into manifests
-            let manifests: Vec<Manifest> = {
-                let mut result = Vec::new();
-                for doc in content.split("\n---") {
-                    let doc = doc.trim();
-                    if doc.is_empty() {
-                        continue;
+            // Parse multi-document YAML (--- separated)
+            // First pass: process ConfigMaps, second pass: process Process manifests
+            let mut process_manifests = Vec::new();
+            for doc in content.split("\n---") {
+                let doc = doc.trim();
+                if doc.is_empty() {
+                    continue;
+                }
+
+                // Peek at the kind field
+                let value: serde_yaml::Value = match serde_yaml::from_str(doc) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        eprintln!("error: invalid YAML document: {e}");
+                        std::process::exit(1);
                     }
-                    match serde_yaml::from_str::<Manifest>(doc) {
-                        Ok(m) => result.push(m),
-                        Err(e) => {
-                            eprintln!("error: invalid manifest: {e}");
+                };
+
+                let kind = value.get("kind").and_then(|k| k.as_str()).unwrap_or("");
+
+                match kind {
+                    "ConfigMap" => {
+                        let cm: ConfigMapManifest = match serde_yaml::from_str(doc) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                eprintln!("error: invalid ConfigMap: {e}");
+                                std::process::exit(1);
+                            }
+                        };
+                        if let Err(e) = write_configmap(&cm.metadata.name, &cm.data) {
+                            eprintln!(
+                                "error: failed to write ConfigMap '{}': {e}",
+                                cm.metadata.name
+                            );
                             std::process::exit(1);
                         }
+                        eprintln!("[configmap/{}] created", cm.metadata.name);
+                    }
+                    "Process" => {
+                        let m: ProcessManifest = match serde_yaml::from_str(doc) {
+                            Ok(m) => m,
+                            Err(e) => {
+                                eprintln!("error: invalid Process manifest: {e}");
+                                std::process::exit(1);
+                            }
+                        };
+                        process_manifests.push(m);
+                    }
+                    _ => {
+                        eprintln!(
+                            "error: unknown kind '{kind}', expected 'Process' or 'ConfigMap'"
+                        );
+                        std::process::exit(1);
                     }
                 }
-                if result.is_empty() {
-                    eprintln!("error: no manifests found in config file");
-                    std::process::exit(1);
-                }
-                result
-            };
+            }
 
-            let manifests: Vec<&Manifest> = if let Some(ref name) = only {
-                match manifests.iter().find(|m| m.metadata.name == *name) {
+            if process_manifests.is_empty() {
+                eprintln!("error: no Process manifests found in config file");
+                std::process::exit(1);
+            }
+
+            let manifests: Vec<&ProcessManifest> = if let Some(ref name) = only {
+                match process_manifests.iter().find(|m| m.metadata.name == *name) {
                     Some(m) => vec![m],
                     None => {
                         eprintln!("error: '{}' not found in config", name);
@@ -474,7 +553,7 @@ async fn main() {
                     }
                 }
             } else {
-                manifests.iter().collect()
+                process_manifests.iter().collect()
             };
 
             let mut errors = 0;
@@ -547,7 +626,8 @@ async fn main() {
 
         Command::Export { o } => match client::send_request(Request::Export).await {
             Ok(protocol::Response::ConfigList(configs)) => {
-                let manifests: Vec<Manifest> = configs.iter().map(config_to_manifest).collect();
+                let manifests: Vec<ProcessManifest> =
+                    configs.iter().map(config_to_manifest).collect();
                 let output = manifests
                     .iter()
                     .map(|m| serde_yaml::to_string(m).unwrap())

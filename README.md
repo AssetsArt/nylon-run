@@ -152,6 +152,20 @@ nyrun export -o ecosystem.yaml        # export running processes
 ```
 
 ```yaml
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  config.yaml: |
+    database:
+      host: localhost
+      port: 5432
+  nginx.conf: |
+    server {
+      listen 80;
+      location / { proxy_pass http://localhost:8000; }
+    }
+---
 kind: Process
 metadata:
   name: api
@@ -163,13 +177,8 @@ spec:
   env:
     NODE_ENV: production
   acme: user@example.com
----
-kind: Process
-metadata:
-  name: redis
-spec:
-  path: redis:7
-  port: "6379:6379"
+  volumes:
+    - configmap:app-config:/etc/app
 ---
 kind: Process
 metadata:
@@ -178,7 +187,7 @@ spec:
   path: nginx:latest
   port: "80:80"
   volumes:
-    - ./nginx.conf:/etc/nginx/nginx.conf
+    - configmap:app-config:/etc/nginx
     - ./html:/usr/share/nginx/html
 ---
 kind: Process
@@ -189,16 +198,33 @@ spec:
   deny: net
 ```
 
+### ConfigMap
+
+Define configuration data inline and mount it into processes (like Kubernetes ConfigMaps):
+
+```yaml
+kind: ConfigMap
+metadata:
+  name: my-config
+data:
+  app.yaml: |
+    key: value
+  settings.json: |
+    {"debug": true}
+```
+
+ConfigMap files are written to `/var/run/nyrun/configmaps/<name>/` and can be mounted via volumes.
+
 ### Volume Mounts
 
-Map host files or directories into the process working directory (like Kubernetes `volumeMounts`):
+Mount host files, directories, or ConfigMaps into the process working directory:
 
 ```yaml
 spec:
   volumes:
-    - ./my-config.yaml:/etc/app/config.yaml    # single file
-    - ./templates:/app/templates                 # directory
-    - /host/path:/container/path                 # absolute path
+    - ./local-file.conf:/etc/app/app.conf      # host file
+    - ./templates:/app/templates                 # host directory
+    - configmap:my-config:/etc/app               # ConfigMap
 ```
 
 Files are copied into the process working directory before start. For OCI images, volumes are mounted into `/var/run/nyrun/oci/<name>/`.
