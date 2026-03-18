@@ -60,11 +60,12 @@ pub async fn pull_and_extract(reference: &str, name: &str) -> Result<PathBuf, St
     let client = Client::new(config);
     let auth = RegistryAuth::Anonymous;
 
-    // Pull entire image (manifest + config + layers)
+    // Accepted manifest media types (Docker v2 + OCI)
     let accepted = vec![
-        manifest::IMAGE_LAYER_MEDIA_TYPE,
-        manifest::IMAGE_LAYER_GZIP_MEDIA_TYPE,
-        manifest::IMAGE_DOCKER_LAYER_GZIP_MEDIA_TYPE,
+        manifest::IMAGE_MANIFEST_MEDIA_TYPE,
+        manifest::IMAGE_MANIFEST_LIST_MEDIA_TYPE,
+        manifest::OCI_IMAGE_MEDIA_TYPE,
+        manifest::OCI_IMAGE_INDEX_MEDIA_TYPE,
     ];
 
     let image_data = client
