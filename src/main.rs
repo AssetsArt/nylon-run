@@ -358,55 +358,6 @@ async fn main() {
             daemon::run_daemon().await;
         }
 
-        Command::Bin {
-            path,
-            name,
-            args,
-            env_file,
-            deny,
-            allow,
-        } => {
-            let env_vars = match &env_file {
-                Some(ef) => match parse_env_file(ef) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        eprintln!("error: {e}");
-                        std::process::exit(1);
-                    }
-                },
-                None => HashMap::new(),
-            };
-
-            let is_oci = oci::is_oci_reference(&path);
-            let (path, oci_reference) = if is_oci {
-                let normalized = oci::normalize_reference(&path);
-                (normalized.clone(), Some(normalized))
-            } else {
-                (path, None)
-            };
-
-            let config = ProcessConfig {
-                name: derive_name(&path, &name),
-                path,
-                args: parse_args_string(&args),
-                env_vars,
-                env_file,
-                mode: ProcessMode::Bin,
-                port_mapping: None,
-                spa: false,
-                ssl: None,
-                acme: None,
-                deny: parse_deny(&deny),
-                allow: parse_allow(&allow),
-                is_oci,
-                oci_reference,
-                pid_file: None,
-                volumes: Vec::new(),
-            };
-
-            client::execute(Request::Bin { config }).await;
-        }
-
         Command::Run {
             path,
             name,
@@ -419,12 +370,15 @@ async fn main() {
             deny,
             allow,
         } => {
-            let port_mapping = match parse_port_mapping(&port) {
-                Ok(pm) => pm,
-                Err(e) => {
-                    eprintln!("error: {e}");
-                    std::process::exit(1);
-                }
+            let port_mapping = match &port {
+                Some(p) => match parse_port_mapping(p) {
+                    Ok(pm) => Some(pm),
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        std::process::exit(1);
+                    }
+                },
+                None => None,
             };
 
             let env_vars = match &env_file {
@@ -451,14 +405,20 @@ async fn main() {
                 (path, None)
             };
 
+            let mode = if port_mapping.is_some() {
+                ProcessMode::Run
+            } else {
+                ProcessMode::Bin
+            };
+
             let config = ProcessConfig {
                 name: derive_name(&path, &name),
                 path,
                 args: parse_args_string(&args),
                 env_vars,
                 env_file,
-                mode: ProcessMode::Run,
-                port_mapping: Some(port_mapping),
+                mode,
+                port_mapping,
                 spa,
                 ssl: ssl_config,
                 acme,
@@ -470,7 +430,12 @@ async fn main() {
                 volumes: Vec::new(),
             };
 
-            client::execute(Request::Run { config }).await;
+            let request = if config.port_mapping.is_some() {
+                Request::Run { config }
+            } else {
+                Request::Bin { config }
+            };
+            client::execute(request).await;
         }
 
         Command::Start { file, only } => {

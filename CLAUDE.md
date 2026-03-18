@@ -19,8 +19,9 @@ nylon-run (`nyrun`) — a Rust process manager and reverse proxy, similar to PM2
 ## CLI Usage
 
 ```
-nyrun bin ./xxx                                  # process management only, no proxy
-nyrun bin ./xxx --args "--port 8000 --verbose"   # pass args to the binary
+nyrun run ./xxx                                  # process management only, no proxy
+nyrun run ./xxx --args "--port 8000 --verbose"   # pass args to the binary
+nyrun run ./xxx --env-file .env                   # env file with process-only mode
 nyrun run ./xxx --p 80:8000                      # proxy (public:internal) + process management
 nyrun run ./xxx --p 80:8000 --args "--config app.yaml"  # proxy + args to binary
 nyrun run ./xxx --p domain.com:80:8000           # proxy with host-based routing on shared port
@@ -29,10 +30,9 @@ nyrun run ./html_folder --spa --p 8080           # serve static files as SPA
 nyrun run ./xxx --p domain.com:443:8000 --ssl cert.pem key.pem  # HTTPS with manual certs
 nyrun run ./xxx --p domain.com:443:8000 --acme user@mail.com   # HTTPS with auto Let's Encrypt
 nyrun run ./xxx --env-file .env --p 80:8000      # load env vars from file
-nyrun bin ./xxx --env-file .env                   # env file with process-only mode
 nyrun run ./xxx --deny net,io --p 80:8000         # sandbox: deny network & disk I/O (Linux eBPF)
 nyrun run ./xxx --deny io --allow /tmp/data,/var/log --p 80:8000  # deny I/O except whitelisted paths
-nyrun bin ./xxx --deny net                        # process-only with network denied
+nyrun run ./xxx --deny net                        # process-only with network denied
 nyrun run ghcr.io/xx/xx:latest --p 8081:8081     # pull OCI image, isolated to its own folder by default
 nyrun run ghcr.io/xx/xx:latest --allow all --p 8081:8081  # OCI but allow full filesystem access
 nyrun start ecosystem.json                        # start all apps from config file (like PM2)
@@ -57,8 +57,9 @@ nyrun unlink                                      # disconnect from cloud UI
 
 ### Key CLI Concepts
 
-- `bin` subcommand — manage a process only (no proxy, no port mapping)
-- `run` subcommand — manage a process with Pingora reverse proxy
+- `run` subcommand — manage a process (with optional reverse proxy via `--p`)
+  - Without `--p`: process management only (no proxy)
+  - With `--p`: enables Pingora reverse proxy
   - `--p` port mapping formats:
     - `--p PUBLIC_PORT:APP_PORT` — simple port mapping
     - `--p HOST:PUBLIC_PORT:APP_PORT` — host-based routing (multiple services can share the same public port with different hostnames)

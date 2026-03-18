@@ -9,36 +9,16 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Manage a process (no proxy)
-    Bin {
-        /// Path to binary
-        path: String,
-        /// Process name (defaults to binary filename)
-        #[arg(long)]
-        name: Option<String>,
-        /// Arguments to pass to the binary (quoted string)
-        #[arg(long)]
-        args: Option<String>,
-        /// Path to .env file
-        #[arg(long)]
-        env_file: Option<String>,
-        /// Deny capabilities: net, io (comma-separated, Linux eBPF)
-        #[arg(long)]
-        deny: Option<String>,
-        /// Allow paths when using --deny io (comma-separated)
-        #[arg(long)]
-        allow: Option<String>,
-    },
-    /// Manage a process with reverse proxy
+    /// Run and manage a process (with optional reverse proxy via --p)
     Run {
         /// Path to binary/directory or OCI image reference
         path: String,
         /// Process name (defaults to binary filename)
         #[arg(long)]
         name: Option<String>,
-        /// Port mapping: PORT, PUBLIC:APP, or HOST:PUBLIC:APP
+        /// Port mapping: PORT, PUBLIC:APP, or HOST:PUBLIC:APP (enables reverse proxy)
         #[arg(long = "p")]
-        port: String,
+        port: Option<String>,
         /// Arguments to pass to the binary (quoted string)
         #[arg(long)]
         args: Option<String>,

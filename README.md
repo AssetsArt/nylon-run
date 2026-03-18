@@ -51,18 +51,15 @@ cargo build --release
 
 ## Usage
 
-### Process Management (no proxy)
+### Process Management
 
 ```bash
-nyrun bin ./my-app
-nyrun bin ./my-app --args "--port 8000 --verbose"
-nyrun bin ./my-app --env-file .env
-```
+# Process only (no proxy)
+nyrun run ./my-app
+nyrun run ./my-app --args "--port 8000 --verbose"
+nyrun run ./my-app --env-file .env
 
-### Process + Reverse Proxy
-
-```bash
-# Simple port mapping (public:internal)
+# With reverse proxy (add --p)
 nyrun run ./my-app --p 80:8000
 
 # Host-based routing
