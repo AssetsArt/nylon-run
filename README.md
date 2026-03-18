@@ -82,7 +82,11 @@ nyrun run ./my-app --p example.com:443:8000 --ssl cert.pem key.pem
 ### OCI Images
 
 ```bash
-# Pull and run an OCI image
+# Short name — defaults to Docker Hub (docker.io/library/)
+nyrun run nginx:latest --p 80:80
+nyrun run traefik:v3.6 --p 80:80
+
+# Full reference
 nyrun run ghcr.io/org/app:latest --p 8081:8081
 
 # OCI with full filesystem access
@@ -109,6 +113,14 @@ nyrun restart <name>        # restart a process
 nyrun reload <name>         # graceful zero-downtime reload
 nyrun del <name>            # stop and remove
 nyrun update <name> --p 443:8000 --acme user@example.com
+```
+
+### Global Settings
+
+```bash
+nyrun set default-registry docker.io     # default — Docker Hub
+nyrun set default-registry ghcr.io       # switch to GitHub Container Registry
+nyrun set cache-ttl 120                  # proxy cache TTL in seconds
 ```
 
 ### System Commands
