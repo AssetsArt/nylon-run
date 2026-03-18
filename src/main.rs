@@ -313,7 +313,12 @@ async fn main() {
             };
 
             let is_oci = oci::is_oci_reference(&path);
-            let oci_reference = if is_oci { Some(path.clone()) } else { None };
+            let (path, oci_reference) = if is_oci {
+                let normalized = oci::normalize_reference(&path);
+                (normalized.clone(), Some(normalized))
+            } else {
+                (path, None)
+            };
 
             let config = ProcessConfig {
                 name: derive_name(&path, &name),
@@ -373,7 +378,12 @@ async fn main() {
             });
 
             let is_oci = oci::is_oci_reference(&path);
-            let oci_reference = if is_oci { Some(path.clone()) } else { None };
+            let (path, oci_reference) = if is_oci {
+                let normalized = oci::normalize_reference(&path);
+                (normalized.clone(), Some(normalized))
+            } else {
+                (path, None)
+            };
 
             let config = ProcessConfig {
                 name: derive_name(&path, &name),

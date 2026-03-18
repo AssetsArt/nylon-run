@@ -7,22 +7,91 @@ use tar::Archive;
 use tracing::{info, warn};
 
 const OCI_DIR: &str = "/var/run/nyrun/oci";
+const DEFAULT_REGISTRY: &str = "docker.io";
+const SETTINGS_FILE: &str = "/var/run/nyrun/settings.json";
 
 /// Check if a path looks like an OCI image reference (not a local filesystem path).
+/// Accepts both full references (ghcr.io/org/app:tag) and short names (traefik:v3.6, nginx).
 pub fn is_oci_reference(path: &str) -> bool {
-    // Local paths: start with /, ./, ../, or are simple filenames without /
-    if path.starts_with('/')
-        || path.starts_with("./")
-        || path.starts_with("../")
-        || !path.contains('/')
-    {
+    // Local paths: start with /, ./, ../
+    if path.starts_with('/') || path.starts_with("./") || path.starts_with("../") {
         return false;
     }
 
-    // OCI references contain a registry hostname with a dot or colon (port)
+    // Full reference: contains a registry hostname with a dot or colon (port)
     // e.g. ghcr.io/org/image:tag, docker.io/library/alpine, localhost:5000/app
-    let first_segment = path.split('/').next().unwrap_or("");
-    first_segment.contains('.') || first_segment.contains(':')
+    if path.contains('/') {
+        let first_segment = path.split('/').next().unwrap_or("");
+        if first_segment.contains('.') || first_segment.contains(':') {
+            return true;
+        }
+    }
+
+    // Short name with tag: e.g. "traefik:v3.6", "nginx:latest", "redis:7"
+    // Must not look like a local file path (no path separators, has a colon for tag)
+    if !path.contains('/') && path.contains(':') {
+        let parts: Vec<&str> = path.splitn(2, ':').collect();
+        let name = parts[0];
+        // Bare name before colon should be a simple alphanumeric image name
+        if !name.is_empty()
+            && name
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Normalize a short OCI reference by prepending the default registry.
+/// e.g. "traefik:v3.6" -> "docker.io/library/traefik:v3.6"
+/// e.g. "ghcr.io/org/app:v1" -> "ghcr.io/org/app:v1" (unchanged)
+pub fn normalize_reference(reference: &str) -> String {
+    // Already a full reference with registry
+    if reference.contains('/') {
+        let first_segment = reference.split('/').next().unwrap_or("");
+        if first_segment.contains('.') || first_segment.contains(':') {
+            return reference.to_string();
+        }
+    }
+
+    // Short name — prepend default registry
+    let registry = load_default_registry();
+    if registry == "docker.io" {
+        // Docker Hub uses "library/" namespace for official images
+        format!("{}/library/{}", registry, reference)
+    } else {
+        format!("{}/{}", registry, reference)
+    }
+}
+
+fn load_default_registry() -> String {
+    if let Ok(data) = std::fs::read_to_string(SETTINGS_FILE)
+        && let Ok(settings) = serde_json::from_str::<serde_json::Value>(&data)
+        && let Some(reg) = settings.get("default-registry").and_then(|v| v.as_str())
+    {
+        return reg.to_string();
+    }
+    DEFAULT_REGISTRY.to_string()
+}
+
+pub fn save_default_registry(registry: &str) -> Result<(), String> {
+    let mut settings = if let Ok(data) = std::fs::read_to_string(SETTINGS_FILE) {
+        serde_json::from_str::<serde_json::Value>(&data).unwrap_or(serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+    settings["default-registry"] = serde_json::Value::String(registry.to_string());
+    let dir = std::path::Path::new(SETTINGS_FILE).parent().unwrap();
+    std::fs::create_dir_all(dir).map_err(|e| format!("failed to create dir: {e}"))?;
+    std::fs::write(
+        SETTINGS_FILE,
+        serde_json::to_string_pretty(&settings).unwrap(),
+    )
+    .map_err(|e| format!("failed to write settings: {e}"))?;
+    Ok(())
 }
 
 /// Extract image name from an OCI reference for use as default process name.

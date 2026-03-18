@@ -148,8 +148,12 @@ async fn handle_request(request: Request, state: &Arc<Mutex<DaemonState>>) -> Re
                 }
                 Err(_) => Response::Error(format!("invalid value '{}': expected seconds", value)),
             },
+            "default-registry" => match crate::oci::save_default_registry(&value) {
+                Ok(()) => Response::Ok(format!("default-registry set to '{}'", value)),
+                Err(e) => Response::Error(format!("failed to save default-registry: {e}")),
+            },
             _ => Response::Error(format!(
-                "unknown config key '{}'. available: cache-ttl",
+                "unknown config key '{}'. available: cache-ttl, default-registry",
                 key
             )),
         },
