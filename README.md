@@ -40,7 +40,7 @@ Managing production services usually means juggling multiple tools — a process
 ## Installation
 
 ```bash
-curl -fsSL https://run.nylon.sh/install | bash
+curl -fsSL https://raw.githubusercontent.com/AssetsArt/nylon-run/main/docs/public/install | bash
 ```
 
 Or build from source:
