@@ -73,30 +73,29 @@ nyrun unlink                                      # disconnect from cloud UI
   - `--allow PATHS` — whitelist comma-separated directories when using `--deny io` (e.g. `--allow /tmp/data,/var/log`)
   - `--args "ARGS"` — pass arguments to the spawned binary (quoted string)
   - Accepts local paths (binary or directory) or OCI image references (e.g. `ghcr.io/org/image:tag`)
-- `start` subcommand — start processes from a JSON config file (like PM2 ecosystem file)
-  - Config is read once at startup; the file does not need to persist after that
-  - `--only NAME` — start only a specific app from the config
-  - If `port` is present in an app entry → `run` mode; otherwise → `bin` mode
+- `start` subcommand — start processes from a YAML config file (k8s-style manifests)
+  - Multi-document YAML with `---` separators, each document is a `kind: Process` manifest
+  - `--only NAME` — start only a specific process from the config
+  - If `port` is present in spec → `run` mode; otherwise → `bin` mode
+  - Supports `volumes` for mounting host files/dirs into process working directory
   - Config format:
-    ```json
-    {
-      "apps": [
-        {
-          "name": "api",
-          "path": "./api-server",
-          "port": "domain.com:443:8000",
-          "args": "--verbose",
-          "env_file": ".env",
-          "env": { "NODE_ENV": "production" },
-          "spa": false,
-          "ssl": ["cert.pem", "key.pem"],
-          "acme": "user@mail.com",
-          "deny": "net,io",
-          "allow": "/tmp",
-          "pid_file": "/var/run/api.pid"
-        }
-      ]
-    }
+    ```yaml
+    kind: Process
+    metadata:
+      name: api
+    spec:
+      path: ./api-server
+      port: "domain.com:443:8000"
+      args: "--verbose"
+      env_file: .env
+      env:
+        NODE_ENV: production
+      ssl: [cert.pem, key.pem]
+      acme: user@mail.com
+      deny: net,io
+      allow: /tmp
+      volumes:
+        - ./config.yaml:/etc/app/config.yaml
     ```
 - `update` subcommand — `--image ghcr.io/xx/xx:v2` re-pulls OCI image and restarts
 - `backup` / `restore` — zip/unzip the entire `/var/run/nyrun/` working directory

@@ -143,38 +143,50 @@ nyrun unlink                # disconnect
 
 ## Config File
 
-Start multiple apps from a single YAML config (JSON also supported):
+Kubernetes-style manifests — multi-document YAML with `---` separators:
 
 ```bash
 nyrun start ecosystem.yaml
 nyrun start ecosystem.yaml --only api
+nyrun export -o ecosystem.yaml        # export running processes
 ```
 
 ```yaml
-apps:
-  - name: api
-    path: ./api-server
-    port: "api.example.com:443:8000"
-    args: "--verbose"
-    env_file: .env
-    env:
-      NODE_ENV: production
-    acme: user@example.com
-
-  - name: redis
-    path: redis:7
-    port: "6379:6379"
-
-  - name: nginx
-    path: nginx:latest
-    port: "80:80"
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf
-      - ./html:/usr/share/nginx/html
-
-  - name: worker
-    path: ./worker
-    deny: net
+kind: Process
+metadata:
+  name: api
+spec:
+  path: ./api-server
+  port: "api.example.com:443:8000"
+  args: "--verbose"
+  env_file: .env
+  env:
+    NODE_ENV: production
+  acme: user@example.com
+---
+kind: Process
+metadata:
+  name: redis
+spec:
+  path: redis:7
+  port: "6379:6379"
+---
+kind: Process
+metadata:
+  name: nginx
+spec:
+  path: nginx:latest
+  port: "80:80"
+  volumes:
+    - ./nginx.conf:/etc/nginx/nginx.conf
+    - ./html:/usr/share/nginx/html
+---
+kind: Process
+metadata:
+  name: worker
+spec:
+  path: ./worker
+  deny: net
 ```
 
 ### Volume Mounts
@@ -182,13 +194,14 @@ apps:
 Map host files or directories into the process working directory (like Kubernetes `volumeMounts`):
 
 ```yaml
-volumes:
-  - ./my-config.yaml:/etc/app/config.yaml    # single file
-  - ./templates:/app/templates                 # directory
-  - /host/path:/container/path                 # absolute path
+spec:
+  volumes:
+    - ./my-config.yaml:/etc/app/config.yaml    # single file
+    - ./templates:/app/templates                 # directory
+    - /host/path:/container/path                 # absolute path
 ```
 
-Files are copied into the process working directory before the process starts. For OCI images, volumes are mounted into the extraction directory (`/var/run/nyrun/oci/<name>/`).
+Files are copied into the process working directory before start. For OCI images, volumes are mounted into `/var/run/nyrun/oci/<name>/`.
 
 ## Architecture
 

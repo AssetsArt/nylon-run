@@ -123,16 +123,22 @@ fn derive_name(path: &str, name: &Option<String>) -> String {
         .to_string()
 }
 
-// --- Config file types (for `nyrun start`) ---
+// --- Config file types (k8s-style manifests for `nyrun start`) ---
 
 #[derive(Serialize, Deserialize)]
-struct ConfigFile {
-    apps: Vec<AppEntry>,
+struct Manifest {
+    kind: String,
+    metadata: ManifestMetadata,
+    spec: ManifestSpec,
 }
 
 #[derive(Serialize, Deserialize)]
-struct AppEntry {
+struct ManifestMetadata {
     name: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ManifestSpec {
     path: String,
     #[serde(default)]
     port: Option<String>,
@@ -154,13 +160,17 @@ struct AppEntry {
     allow: Option<String>,
     #[serde(default)]
     pid_file: Option<String>,
-    /// Volume mounts: "host_path:container_path"
     #[serde(default)]
     volumes: Vec<String>,
 }
 
-fn app_entry_to_config(app: &AppEntry) -> Result<ProcessConfig, String> {
-    let env_vars = match (&app.env_file, &app.env) {
+fn manifest_to_config(m: &Manifest) -> Result<ProcessConfig, String> {
+    if m.kind != "Process" {
+        return Err(format!("unknown kind '{}', expected 'Process'", m.kind));
+    }
+
+    let spec = &m.spec;
+    let env_vars = match (&spec.env_file, &spec.env) {
         (Some(ef), Some(extra)) => {
             let mut vars = parse_env_file(ef)?;
             vars.extend(extra.clone());
@@ -171,7 +181,7 @@ fn app_entry_to_config(app: &AppEntry) -> Result<ProcessConfig, String> {
         (None, None) => HashMap::new(),
     };
 
-    let port_mapping = match &app.port {
+    let port_mapping = match &spec.port {
         Some(p) => Some(parse_port_mapping(p)?),
         None => None,
     };
@@ -182,7 +192,7 @@ fn app_entry_to_config(app: &AppEntry) -> Result<ProcessConfig, String> {
         ProcessMode::Bin
     };
 
-    let ssl_config = app.ssl.as_ref().and_then(|s| {
+    let ssl_config = spec.ssl.as_ref().and_then(|s| {
         if s.len() == 2 {
             Some(SslConfig {
                 cert_path: s[0].clone(),
@@ -193,30 +203,35 @@ fn app_entry_to_config(app: &AppEntry) -> Result<ProcessConfig, String> {
         }
     });
 
-    let is_oci = oci::is_oci_reference(&app.path);
-    let oci_reference = if is_oci { Some(app.path.clone()) } else { None };
+    let is_oci = oci::is_oci_reference(&spec.path);
+    let (path, oci_reference) = if is_oci {
+        let normalized = oci::normalize_reference(&spec.path);
+        (normalized.clone(), Some(normalized))
+    } else {
+        (spec.path.clone(), None)
+    };
 
     Ok(ProcessConfig {
-        name: app.name.clone(),
-        path: app.path.clone(),
-        args: parse_args_string(&app.args),
+        name: m.metadata.name.clone(),
+        path,
+        args: parse_args_string(&spec.args),
         env_vars,
-        env_file: app.env_file.clone(),
+        env_file: spec.env_file.clone(),
         mode,
         port_mapping,
-        spa: app.spa,
+        spa: spec.spa,
         ssl: ssl_config,
-        acme: app.acme.clone(),
-        deny: parse_deny(&app.deny),
-        allow: parse_allow(&app.allow),
+        acme: spec.acme.clone(),
+        deny: parse_deny(&spec.deny),
+        allow: parse_allow(&spec.allow),
         is_oci,
         oci_reference,
-        pid_file: app.pid_file.clone(),
-        volumes: app.volumes.clone(),
+        pid_file: spec.pid_file.clone(),
+        volumes: spec.volumes.clone(),
     })
 }
 
-fn config_to_app_entry(c: &ProcessConfig) -> AppEntry {
+fn config_to_manifest(c: &ProcessConfig) -> Manifest {
     let port = c.port_mapping.as_ref().map(|pm| {
         if let Some(ref host) = pm.host {
             format!(
@@ -263,20 +278,25 @@ fn config_to_app_entry(c: &ProcessConfig) -> AppEntry {
         Some(c.allow.join(","))
     };
 
-    AppEntry {
-        name: c.name.clone(),
-        path,
-        port,
-        args,
-        env_file: c.env_file.clone(),
-        env,
-        spa: c.spa,
-        ssl,
-        acme: c.acme.clone(),
-        deny,
-        allow,
-        pid_file: c.pid_file.clone(),
-        volumes: c.volumes.clone(),
+    Manifest {
+        kind: "Process".to_string(),
+        metadata: ManifestMetadata {
+            name: c.name.clone(),
+        },
+        spec: ManifestSpec {
+            path,
+            port,
+            args,
+            env_file: c.env_file.clone(),
+            env,
+            spa: c.spa,
+            ssl,
+            acme: c.acme.clone(),
+            deny,
+            allow,
+            pid_file: c.pid_file.clone(),
+            volumes: c.volumes.clone(),
+        },
     }
 }
 
@@ -422,43 +442,47 @@ async fn main() {
                 }
             };
 
-            let config_file: ConfigFile = if file.ends_with(".json") {
-                match serde_json::from_str(&content) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        eprintln!("error: invalid JSON config: {e}");
-                        std::process::exit(1);
+            // Parse multi-document YAML (--- separated) into manifests
+            let manifests: Vec<Manifest> = {
+                let mut result = Vec::new();
+                for doc in content.split("\n---") {
+                    let doc = doc.trim();
+                    if doc.is_empty() {
+                        continue;
+                    }
+                    match serde_yaml::from_str::<Manifest>(doc) {
+                        Ok(m) => result.push(m),
+                        Err(e) => {
+                            eprintln!("error: invalid manifest: {e}");
+                            std::process::exit(1);
+                        }
                     }
                 }
-            } else {
-                // Default to YAML (supports .yml, .yaml, or any other extension)
-                match serde_yaml::from_str(&content) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        eprintln!("error: invalid YAML config: {e}");
-                        std::process::exit(1);
-                    }
+                if result.is_empty() {
+                    eprintln!("error: no manifests found in config file");
+                    std::process::exit(1);
                 }
+                result
             };
 
-            let apps: Vec<&AppEntry> = if let Some(ref name) = only {
-                match config_file.apps.iter().find(|a| &a.name == name) {
-                    Some(app) => vec![app],
+            let manifests: Vec<&Manifest> = if let Some(ref name) = only {
+                match manifests.iter().find(|m| m.metadata.name == *name) {
+                    Some(m) => vec![m],
                     None => {
-                        eprintln!("error: app '{}' not found in config", name);
+                        eprintln!("error: '{}' not found in config", name);
                         std::process::exit(1);
                     }
                 }
             } else {
-                config_file.apps.iter().collect()
+                manifests.iter().collect()
             };
 
             let mut errors = 0;
-            for app in &apps {
-                let config = match app_entry_to_config(app) {
+            for manifest in &manifests {
+                let config = match manifest_to_config(manifest) {
                     Ok(c) => c,
                     Err(e) => {
-                        eprintln!("[{}] error: {e}", app.name);
+                        eprintln!("[{}] error: {e}", manifest.metadata.name);
                         errors += 1;
                         continue;
                     }
@@ -470,7 +494,7 @@ async fn main() {
                     Request::Bin { config }
                 };
 
-                print!("[{}] ", app.name);
+                print!("[{}] ", manifest.metadata.name);
                 client::execute(request).await;
             }
 
@@ -523,9 +547,12 @@ async fn main() {
 
         Command::Export { o } => match client::send_request(Request::Export).await {
             Ok(protocol::Response::ConfigList(configs)) => {
-                let apps: Vec<AppEntry> = configs.iter().map(config_to_app_entry).collect();
-                let file = ConfigFile { apps };
-                let output = serde_yaml::to_string(&file).unwrap();
+                let manifests: Vec<Manifest> = configs.iter().map(config_to_manifest).collect();
+                let output = manifests
+                    .iter()
+                    .map(|m| serde_yaml::to_string(m).unwrap())
+                    .collect::<Vec<_>>()
+                    .join("---\n");
                 match o {
                     Some(path) => {
                         if let Err(e) = std::fs::write(&path, &output) {
