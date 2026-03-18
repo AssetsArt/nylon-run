@@ -80,6 +80,46 @@ impl ProcessManager {
     async fn start_process(&mut self, config: ProcessConfig) -> Result<ManagedProcess, String> {
         let mut config = config;
 
+        // Local binary: copy to /var/run/nyrun/apps/<name>/ and run from there
+        if !config.is_oci && !config.spa {
+            let src = std::path::Path::new(&config.path);
+            if src.exists() {
+                let app_dir =
+                    std::path::PathBuf::from(format!("/var/run/nyrun/apps/{}", config.name));
+                std::fs::create_dir_all(&app_dir)
+                    .map_err(|e| format!("failed to create app dir: {e}"))?;
+
+                let dest = if src.is_dir() {
+                    // Directory (e.g. SPA folder or app with assets): copy recursively
+                    copy_dir_recursive(src, &app_dir)?;
+                    app_dir.clone()
+                } else {
+                    // Single binary: copy into the app dir
+                    let bin_name = src
+                        .file_name()
+                        .unwrap_or(std::ffi::OsStr::new(&config.name));
+                    let dest = app_dir.join(bin_name);
+                    std::fs::copy(src, &dest).map_err(|e| format!("failed to copy binary: {e}"))?;
+                    // Ensure executable
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        let _ =
+                            std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755));
+                    }
+                    dest
+                };
+
+                info!(
+                    name = %config.name,
+                    src = %src.display(),
+                    dest = %dest.display(),
+                    "binary copied to app directory"
+                );
+                config.path = dest.to_string_lossy().to_string();
+            }
+        }
+
         // OCI: pull and extract if needed
         if config.is_oci {
             let reference = config.oci_reference.as_deref().unwrap_or(&config.path);
@@ -134,10 +174,7 @@ impl ProcessManager {
             let work_dir = if config.is_oci {
                 std::path::PathBuf::from(format!("/var/run/nyrun/oci/{}", config.name))
             } else {
-                std::path::Path::new(&config.path)
-                    .parent()
-                    .unwrap_or(std::path::Path::new("/"))
-                    .to_path_buf()
+                std::path::PathBuf::from(format!("/var/run/nyrun/apps/{}", config.name))
             };
 
             for vol in &config.volumes {
@@ -209,17 +246,10 @@ impl ProcessManager {
         if !config.deny.is_empty() {
             let deny = config.deny.clone();
             let allow = config.allow.clone();
-            let working_dir = std::path::Path::new(&config.path)
-                .parent()
-                .unwrap_or(std::path::Path::new("/"))
-                .to_string_lossy()
-                .to_string();
-
-            // For OCI processes, use the OCI extraction dir as working dir
             let working_dir = if config.is_oci {
-                format!("{}/{}", "/var/run/nyrun/oci", config.name)
+                format!("/var/run/nyrun/oci/{}", config.name)
             } else {
-                working_dir
+                format!("/var/run/nyrun/apps/{}", config.name)
             };
 
             unsafe {
