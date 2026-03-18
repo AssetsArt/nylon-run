@@ -466,20 +466,38 @@ fn parse_env_file_str(path: &str) -> Result<HashMap<String, String>, String> {
     Ok(vars)
 }
 
-async fn handle_run(state: &Arc<Mutex<DaemonState>>, config: ProcessConfig) -> Response {
+async fn handle_run(state: &Arc<Mutex<DaemonState>>, mut config: ProcessConfig) -> Response {
     let name = config.name.clone();
     let is_spa = config.spa;
-    let port_mapping = config.port_mapping.clone();
     let acme_email = config.acme.clone();
     let ssl = config
         .ssl
         .as_ref()
         .map(|s| (s.cert_path.clone(), s.key_path.clone()));
 
-    let pm = match &port_mapping {
-        Some(pm) => pm.clone(),
+    let mut pm = match config.port_mapping.clone() {
+        Some(pm) => pm,
         None => return Response::Error("run requires --p port mapping".to_string()),
     };
+
+    // Auto-remap port when public == app port (no container network isolation)
+    if pm.app_port == Some(pm.public_port) || pm.app_port.is_none() {
+        let auto_port = match std::net::TcpListener::bind("127.0.0.1:0") {
+            Ok(l) => l.local_addr().unwrap().port(),
+            Err(e) => return Response::Error(format!("failed to find free port: {e}")),
+        };
+        tracing::info!(
+            name = %name,
+            public_port = pm.public_port,
+            internal_port = auto_port,
+            "auto-remapped port (same public/app port)"
+        );
+        pm.app_port = Some(auto_port);
+        config.port_mapping = Some(pm.clone());
+        config
+            .env_vars
+            .insert("PORT".to_string(), auto_port.to_string());
+    }
 
     // ACME requires a hostname in the port mapping
     if acme_email.is_some() && pm.host.is_none() {

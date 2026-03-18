@@ -213,24 +213,6 @@ impl ProcessManager {
             }
         }
 
-        // Auto-remap port when public == app port (no container network isolation)
-        if let Some(ref mut pm) = config.port_mapping
-            && (pm.app_port == Some(pm.public_port) || pm.app_port.is_none())
-        {
-            let auto_port =
-                find_free_port().map_err(|e| format!("failed to find free port: {e}"))?;
-            info!(
-                name = %config.name,
-                public_port = pm.public_port,
-                internal_port = auto_port,
-                "auto-remapped port (same public/app port)"
-            );
-            pm.app_port = Some(auto_port);
-            config
-                .env_vars
-                .insert("PORT".to_string(), auto_port.to_string());
-        }
-
         let mut cmd = Command::new(&config.path);
         cmd.args(&config.args);
 
@@ -664,12 +646,6 @@ async fn capture_output<R: tokio::io::AsyncRead + Unpin>(reader: R, log_path: Pa
         let timestamped = format!("[{}] {}\n", Utc::now().format("%Y-%m-%d %H:%M:%S"), line);
         let _ = file.write_all(timestamped.as_bytes()).await;
     }
-}
-
-/// Find a free TCP port by binding to port 0.
-fn find_free_port() -> Result<u16, std::io::Error> {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
-    Ok(listener.local_addr()?.port())
 }
 
 /// Recursively copy a directory.
