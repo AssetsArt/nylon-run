@@ -1,0 +1,100 @@
+#!/bin/bash
+set -e
+
+# Nylon Run Installer
+# https://github.com/AssetsArt/nylon-run
+
+REPO="AssetsArt/nylon-run"
+INSTALL_DIR="${HOME}/.nyrun"
+BIN_DIR="${INSTALL_DIR}/bin"
+EXE_NAME="nyrun"
+
+echo "Installing Nylon Run..."
+
+# Detect OS and Architecture
+OS="$(uname -s)"
+ARCH="$(uname -m)"
+
+platform=""
+case "$OS" in
+    Linux)
+        case "$ARCH" in
+            x86_64)        platform="linux-amd64" ;;
+            aarch64|arm64) platform="linux-arm64" ;;
+            *)             echo "Unsupported architecture: $ARCH"; exit 1 ;;
+        esac
+        ;;
+    Darwin)
+        case "$ARCH" in
+            arm64|aarch64) platform="darwin-arm64" ;;
+            *)             echo "Unsupported architecture: $ARCH (only Apple Silicon is supported)"; exit 1 ;;
+        esac
+        ;;
+    CYGWIN*|MINGW*|MSYS*)
+        echo "Windows is not currently supported."
+        exit 1
+        ;;
+    *)
+        echo "Unsupported OS: $OS"
+        exit 1
+        ;;
+esac
+
+ASSET_NAME="nyrun-${platform}.tar.gz"
+
+# Get the latest release version using GitHub API
+echo "Fetching latest release..."
+LATEST_RELEASE=$(curl -s "https://api.github.com/repos/${REPO}/releases/latest" | grep -o '"tag_name": *"[^"]*"' | sed -E 's/.*"([^"]+)".*/\1/')
+
+if [ -z "$LATEST_RELEASE" ]; then
+    echo "Failed to fetch the latest release version from GitHub."
+    exit 1
+fi
+
+DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${LATEST_RELEASE}/${ASSET_NAME}"
+
+# Create bin directory
+mkdir -p "$BIN_DIR"
+
+# Download and extract
+echo "Downloading ${ASSET_NAME} (${LATEST_RELEASE})..."
+echo "From: ${DOWNLOAD_URL}"
+curl -fsSL "$DOWNLOAD_URL" | tar xz -C "$BIN_DIR"
+
+# Make executable
+chmod +x "${BIN_DIR}/${EXE_NAME}"
+
+echo "Nylon Run installed to ${BIN_DIR}/${EXE_NAME}"
+
+# Setup PATH
+PROFILE_STRING="export PATH=\"\$HOME/.nyrun/bin:\$PATH\""
+RC_FILE=""
+
+if [ -n "$ZSH_VERSION" ] || [[ "$SHELL" == *"zsh"* ]]; then
+    RC_FILE="$HOME/.zshrc"
+elif [ -n "$BASH_VERSION" ] || [[ "$SHELL" == *"bash"* ]]; then
+    RC_FILE="$HOME/.bashrc"
+fi
+
+if [[ ":$PATH:" != *":$HOME/.nyrun/bin:"* ]]; then
+    if [ -n "$RC_FILE" ]; then
+        if ! grep -q "$PROFILE_STRING" "$RC_FILE"; then
+            echo "" >> "$RC_FILE"
+            echo "# Nylon Run" >> "$RC_FILE"
+            echo "$PROFILE_STRING" >> "$RC_FILE"
+        fi
+        echo "Added $BIN_DIR to your PATH via $RC_FILE."
+        echo "Please run 'source $RC_FILE' to update your current session,"
+        echo "or start a new terminal."
+    else
+        echo "Please add the following line to your shell profile:"
+        echo "  $PROFILE_STRING"
+    fi
+else
+    echo "Nylon Run is ready to use!"
+fi
+
+echo ""
+echo "Quick start:"
+echo "  nyrun bin ./my-app"
+echo "  nyrun run ./my-app --p 80:8000"
