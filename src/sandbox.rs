@@ -12,6 +12,7 @@ mod linux {
         Access, AccessFs, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr,
         RulesetStatus, ABI,
     };
+    use nix::libc;
     use seccompiler::{
         BpfProgram, SeccompAction, SeccompFilter, SeccompRule,
     };
@@ -97,19 +98,22 @@ mod linux {
 
         for dir in system_read_dirs {
             if let Ok(fd) = PathFd::new(dir) {
-                let _ = ruleset.add_rule(PathBeneath::new(fd, read_access));
+                ruleset = ruleset.add_rule(PathBeneath::new(fd, read_access))
+                    .map_err(|e| format!("landlock add rule error: {e}"))?;
             }
         }
 
         // Allow full access to working directory
         if let Ok(fd) = PathFd::new(working_dir) {
-            let _ = ruleset.add_rule(PathBeneath::new(fd, full_access));
+            ruleset = ruleset.add_rule(PathBeneath::new(fd, full_access))
+                .map_err(|e| format!("landlock add rule error: {e}"))?;
         }
 
         // Allow full access to explicitly allowed paths
         for path in allowed_paths {
             if let Ok(fd) = PathFd::new(path) {
-                let _ = ruleset.add_rule(PathBeneath::new(fd, full_access));
+                ruleset = ruleset.add_rule(PathBeneath::new(fd, full_access))
+                    .map_err(|e| format!("landlock add rule error: {e}"))?;
             } else {
                 warn!(path, "allowed path not found, skipping");
             }
@@ -117,12 +121,14 @@ mod linux {
 
         // Always allow access to nyrun logs directory
         if let Ok(fd) = PathFd::new("/var/run/nyrun/logs") {
-            let _ = ruleset.add_rule(PathBeneath::new(fd, full_access));
+            ruleset = ruleset.add_rule(PathBeneath::new(fd, full_access))
+                .map_err(|e| format!("landlock add rule error: {e}"))?;
         }
 
         // Allow /tmp for temporary files
         if let Ok(fd) = PathFd::new("/tmp") {
-            let _ = ruleset.add_rule(PathBeneath::new(fd, full_access));
+            ruleset = ruleset.add_rule(PathBeneath::new(fd, full_access))
+                .map_err(|e| format!("landlock add rule error: {e}"))?;
         }
 
         let status = ruleset
