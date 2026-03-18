@@ -10,13 +10,9 @@
 
 *A language-agnostic process manager and reverse proxy built in Rust with Pingora.*
 
-[Why Nylon Run?](#why-nylon-run) • [Features](#features) • [Install](#installation) • [Usage](#usage) • [Ecosystem File](#ecosystem-file)
+[Features](#features) • [Install](#installation) • [Usage](#usage) • [Config](#config-file)
 
 </div>
-
-## Why Nylon Run?
-
-Managing production services usually means juggling multiple tools — a process manager, a reverse proxy, TLS certificates, and monitoring dashboards. **Nylon Run combines all of that into a single binary** with zero config files. Everything is driven by CLI commands and persisted automatically.
 
 ## Features
 
@@ -26,9 +22,10 @@ Managing production services usually means juggling multiple tools — a process
 - **Auto SSL** — automatic Let's Encrypt certificates via ACME (HTTP-01)
 - **SPA Static Serving** — serve any directory as a single-page application
 - **In-Memory Cache** — built-in response caching (moka, 10k entries, 60s TTL)
-- **OCI Support** — pull and run container images natively, no Docker required
-- **eBPF Sandboxing** — restrict network/filesystem access per process (Linux)
-- **Prometheus Metrics** — built-in `/metrics` endpoint for Grafana dashboards
+- **Native OCI Execution** — pull any Docker/OCI image, extract it, and run the binary directly as a native host process — bypassing container runtimes entirely
+- **eBPF Sandboxing** — restrict network/filesystem access per process at the kernel level (Linux). OCI processes are sandboxed to their own directory by default
+- **Prometheus Metrics** — opt-in `/metrics` endpoint for Grafana dashboards (`nyrun metrics enable`)
+- **K8s-Style Config** — multi-document YAML manifests with ConfigMap and volume mounts
 - **Backup/Restore** — zip/unzip the entire runtime state
 - **Cloud Agent** — optional remote management via WebSocket
 
@@ -71,21 +68,28 @@ nyrun run ./my-app --p example.com:443:8000 --acme user@example.com
 nyrun run ./my-app --p example.com:443:8000 --ssl cert.pem key.pem
 ```
 
-### OCI Images
+### OCI Images — Containerless Execution
+
+Stop building from source. Nylon Run extracts and executes binaries from any Docker/OCI image natively on your host.
 
 ```bash
-# Short name — defaults to Docker Hub (docker.io/library/)
+# Short name — defaults to Docker Hub
 nyrun run nginx:latest --p 80:80
 nyrun run traefik:v3.6 --p 80:80
+nyrun run redis:7
 
 # Full reference
 nyrun run ghcr.io/org/app:latest --p 8081:8081
 
-# OCI with full filesystem access
+# OCI with full filesystem access (bypass default sandbox)
 nyrun run ghcr.io/org/app:latest --allow all --p 8081:8081
 ```
 
+OCI images are extracted to `/var/run/nyrun/oci/<name>/` and executed as native processes. Each OCI process is automatically sandboxed to its own directory via eBPF — no container runtime, no namespaces, zero overhead.
+
 ### eBPF Sandboxing (Linux)
+
+Kernel-level process isolation without containers:
 
 ```bash
 # Deny network access
@@ -107,11 +111,15 @@ nyrun del <name>            # stop and remove
 nyrun update <name> --p 443:8000 --acme user@example.com
 ```
 
-### Global Settings
+### Metrics & Settings
 
 ```bash
-nyrun set default-registry docker.io     # default — Docker Hub
-nyrun set default-registry ghcr.io       # switch to GitHub Container Registry
+nyrun metrics enable              # start Prometheus metrics on :9090
+nyrun metrics enable --port 9100  # custom port
+nyrun metrics disable             # stop metrics server
+
+nyrun set default-registry docker.io     # default OCI registry
+nyrun set default-registry ghcr.io       # switch to GHCR
 nyrun set cache-ttl 120                  # proxy cache TTL in seconds
 ```
 
@@ -192,7 +200,7 @@ spec:
 
 ### ConfigMap
 
-Define configuration data inline and mount it into processes (like Kubernetes ConfigMaps):
+Define configuration data inline and mount it into processes:
 
 ```yaml
 kind: ConfigMap
@@ -219,8 +227,6 @@ spec:
     - configmap:my-config:/etc/app               # ConfigMap
 ```
 
-Files are copied into the process working directory before start. For OCI images, volumes are mounted into `/var/run/nyrun/oci/<name>/`.
-
 ## Architecture
 
 | Component | Technology |
@@ -230,6 +236,7 @@ Files are copied into the process working directory before start. For OCI images
 | State | [SlateDB](https://github.com/slatedb/slatedb) |
 | ACME | [instant-acme](https://github.com/InstantDomain/instant-acme) |
 | Metrics | [prometheus-client](https://github.com/prometheus/client_rust) |
+| Sandbox | eBPF (Landlock + seccomp) |
 | Allocator | [mimalloc](https://github.com/purpleprotocol/mimalloc_rust) |
 
 ## License
