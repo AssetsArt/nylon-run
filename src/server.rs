@@ -218,6 +218,7 @@ async fn handle_request(request: Request, state: &Arc<Mutex<DaemonState>>) -> Re
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_update(
     state: &Arc<Mutex<DaemonState>>,
     name: String,
@@ -236,10 +237,10 @@ async fn handle_update(
         match crate::oci::pull_and_extract(img_ref, &name).await {
             Ok(extract_dir) => {
                 // Record OCI pull success metric
-                if let Ok(st) = state.try_lock() {
-                    if let Some(m) = st.process_mgr.metrics() {
-                        m.oci_pulls_total.inc();
-                    }
+                if let Ok(st) = state.try_lock()
+                    && let Some(m) = st.process_mgr.metrics()
+                {
+                    m.oci_pulls_total.inc();
                 }
                 match crate::oci::find_entrypoint(&extract_dir) {
                     Ok((entrypoint, extra_args)) => Some((img_ref.clone(), entrypoint, extra_args)),
@@ -247,10 +248,10 @@ async fn handle_update(
                 }
             }
             Err(e) => {
-                if let Ok(st) = state.try_lock() {
-                    if let Some(m) = st.process_mgr.metrics() {
-                        m.oci_pull_errors_total.inc();
-                    }
+                if let Ok(st) = state.try_lock()
+                    && let Some(m) = st.process_mgr.metrics()
+                {
+                    m.oci_pull_errors_total.inc();
                 }
                 return Response::Error(format!("OCI pull failed: {e}"));
             }

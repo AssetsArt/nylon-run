@@ -59,12 +59,11 @@ impl ProcessManager {
         let pid = managed.pid;
 
         // Write PID file if configured
-        if let Some(ref pid_path) = managed.config.pid_file {
-            if let Some(p) = pid {
-                if let Err(e) = std::fs::write(pid_path, p.to_string()) {
-                    warn!(path = %pid_path, error = %e, "failed to write pid file");
-                }
-            }
+        if let Some(ref pid_path) = managed.config.pid_file
+            && let Some(p) = pid
+            && let Err(e) = std::fs::write(pid_path, p.to_string())
+        {
+            warn!(path = %pid_path, error = %e, "failed to write pid file");
         }
 
         self.processes.insert(name.clone(), managed);
@@ -278,10 +277,10 @@ impl ProcessManager {
         let pid = managed.pid;
 
         // Update PID file on restart
-        if let Some(ref pid_path) = managed.config.pid_file {
-            if let Some(p) = pid {
-                let _ = std::fs::write(pid_path, p.to_string());
-            }
+        if let Some(ref pid_path) = managed.config.pid_file
+            && let Some(p) = pid
+        {
+            let _ = std::fs::write(pid_path, p.to_string());
         }
 
         self.processes.insert(name.to_string(), managed);
