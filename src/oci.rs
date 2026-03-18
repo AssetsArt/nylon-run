@@ -1,6 +1,5 @@
 use flate2::read::GzDecoder;
 use oci_distribution::client::{ClientConfig, ClientProtocol};
-use oci_distribution::manifest;
 use oci_distribution::secrets::RegistryAuth;
 use oci_distribution::{Client, Reference};
 use std::path::{Path, PathBuf};
@@ -60,47 +59,70 @@ pub async fn pull_and_extract(reference: &str, name: &str) -> Result<PathBuf, St
     let client = Client::new(config);
     let auth = RegistryAuth::Anonymous;
 
-    // Accepted manifest media types (Docker v2 + OCI)
-    let accepted = vec![
-        manifest::IMAGE_MANIFEST_MEDIA_TYPE,
-        manifest::IMAGE_MANIFEST_LIST_MEDIA_TYPE,
-        manifest::OCI_IMAGE_MEDIA_TYPE,
-        manifest::OCI_IMAGE_INDEX_MEDIA_TYPE,
-    ];
-
-    let image_data = client
-        .pull(&img_ref, &auth, accepted)
+    // Step 1: Pull manifest
+    info!("  Pulling manifest...");
+    let (img_manifest, _digest) = client
+        .pull_image_manifest(&img_ref, &auth)
         .await
-        .map_err(|e| format!("failed to pull image: {e}"))?;
+        .map_err(|e| format!("failed to pull manifest: {e}"))?;
 
     // Create extraction directory
     std::fs::create_dir_all(&dest_dir)
         .map_err(|e| format!("failed to create dir {}: {e}", dest_dir.display()))?;
 
-    // Save config for entrypoint discovery
-    let config_path = dest_dir.join(".oci-config.json");
-    let _ = std::fs::write(&config_path, &image_data.config.data);
+    // Step 2: Pull config blob
+    info!("  Pulling config...");
+    let mut config_data = Vec::new();
+    client
+        .pull_blob(&img_ref, &img_manifest.config, &mut config_data)
+        .await
+        .map_err(|e| format!("failed to pull config: {e}"))?;
 
-    // Extract layers
-    for (i, layer) in image_data.layers.iter().enumerate() {
+    let config_path = dest_dir.join(".oci-config.json");
+    std::fs::write(&config_path, &config_data)
+        .map_err(|e| format!("failed to write config: {e}"))?;
+
+    // Step 3: Pull and extract each layer with progress
+    let total_layers = img_manifest.layers.len();
+    for (i, layer) in img_manifest.layers.iter().enumerate() {
         info!(
-            layer = i + 1,
-            total = image_data.layers.len(),
-            media_type = %layer.media_type,
-            size = layer.data.len(),
-            "extracting layer"
+            "  Pulling layer {}/{}: {} ({})",
+            i + 1,
+            total_layers,
+            layer.digest,
+            format_size(layer.size as u64),
         );
 
-        extract_layer(&layer.data, &layer.media_type, &dest_dir)?;
+        let mut layer_data = Vec::new();
+        client
+            .pull_blob(&img_ref, layer, &mut layer_data)
+            .await
+            .map_err(|e| format!("failed to pull layer {}: {e}", layer.digest))?;
+
+        info!("  Extracting layer {}/{}...", i + 1, total_layers,);
+        extract_layer(&layer_data, &layer.media_type, &dest_dir)?;
     }
 
     info!(
         reference,
         dest = %dest_dir.display(),
-        "OCI image extracted"
+        layers = total_layers,
+        "OCI image pulled and extracted"
     );
 
     Ok(dest_dir)
+}
+
+fn format_size(bytes: u64) -> String {
+    if bytes >= 1_000_000_000 {
+        format!("{:.1} GB", bytes as f64 / 1_073_741_824.0)
+    } else if bytes >= 1_000_000 {
+        format!("{:.1} MB", bytes as f64 / 1_048_576.0)
+    } else if bytes >= 1_000 {
+        format!("{:.0} KB", bytes as f64 / 1_024.0)
+    } else {
+        format!("{} B", bytes)
+    }
 }
 
 fn extract_layer(data: &[u8], media_type: &str, dest_dir: &Path) -> Result<(), String> {
