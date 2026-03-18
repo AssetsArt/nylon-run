@@ -2,7 +2,7 @@ use prometheus_client::encoding::text::encode;
 use prometheus_client::metrics::counter::Counter;
 use prometheus_client::metrics::family::Family;
 use prometheus_client::metrics::gauge::Gauge;
-use prometheus_client::metrics::histogram::{exponential_buckets, Histogram};
+use prometheus_client::metrics::histogram::{Histogram, exponential_buckets};
 use prometheus_client::registry::Registry;
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
@@ -58,8 +58,7 @@ impl Metrics {
             http_requests_total.clone(),
         );
 
-        let http_request_duration_seconds =
-            Histogram::new(exponential_buckets(0.001, 2.0, 16));
+        let http_request_duration_seconds = Histogram::new(exponential_buckets(0.001, 2.0, 16));
         registry.register(
             "nyrun_http_request_duration_seconds",
             "HTTP request latency in seconds",
@@ -122,8 +121,7 @@ impl Metrics {
             network_sent_bytes_total.clone(),
         );
 
-        let response_size_bytes =
-            Histogram::new(exponential_buckets(256.0, 4.0, 10));
+        let response_size_bytes = Histogram::new(exponential_buckets(256.0, 4.0, 10));
         registry.register(
             "nyrun_response_size_bytes",
             "Response body size distribution in bytes",

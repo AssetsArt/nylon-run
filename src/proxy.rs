@@ -366,9 +366,7 @@ impl ProxyHttp for NyrunProxy {
 
             // Upstream errors
             if e.is_some() {
-                m.upstream_errors_total
-                    .get_or_create(&host_labels)
-                    .inc();
+                m.upstream_errors_total.get_or_create(&host_labels).inc();
             }
         }
     }
@@ -582,7 +580,15 @@ impl ProxyManager {
             let metrics = self.metrics.clone();
             let challenge_store = self.challenge_store.clone();
             std::thread::spawn(move || {
-                start_pingora_server(ports, tls_ports, routes, cache, cert_store, metrics, challenge_store);
+                start_pingora_server(
+                    ports,
+                    tls_ports,
+                    routes,
+                    cache,
+                    cert_store,
+                    metrics,
+                    challenge_store,
+                );
             });
         }
 
@@ -635,7 +641,12 @@ fn start_pingora_server(
     });
     server.bootstrap();
 
-    let proxy = NyrunProxy { routes, cache, metrics, challenge_store };
+    let proxy = NyrunProxy {
+        routes,
+        cache,
+        metrics,
+        challenge_store,
+    };
     let mut service = http_proxy_service(&server.configuration, proxy);
 
     for port in &ports {

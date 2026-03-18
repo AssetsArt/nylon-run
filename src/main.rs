@@ -6,9 +6,9 @@ mod daemon;
 mod metrics;
 mod oci;
 mod process;
-mod sandbox;
 mod protocol;
 mod proxy;
+mod sandbox;
 mod server;
 mod state;
 mod tls;
@@ -191,11 +191,7 @@ fn app_entry_to_config(app: &AppEntry) -> Result<ProcessConfig, String> {
     });
 
     let is_oci = oci::is_oci_reference(&app.path);
-    let oci_reference = if is_oci {
-        Some(app.path.clone())
-    } else {
-        None
-    };
+    let oci_reference = if is_oci { Some(app.path.clone()) } else { None };
 
     Ok(ProcessConfig {
         name: app.name.clone(),
@@ -219,7 +215,12 @@ fn app_entry_to_config(app: &AppEntry) -> Result<ProcessConfig, String> {
 fn config_to_app_entry(c: &ProcessConfig) -> AppEntry {
     let port = c.port_mapping.as_ref().map(|pm| {
         if let Some(ref host) = pm.host {
-            format!("{}:{}:{}", host, pm.public_port, pm.app_port.unwrap_or(pm.public_port))
+            format!(
+                "{}:{}:{}",
+                host,
+                pm.public_port,
+                pm.app_port.unwrap_or(pm.public_port)
+            )
         } else if let Some(app) = pm.app_port {
             format!("{}:{}", pm.public_port, app)
         } else {
@@ -241,7 +242,10 @@ fn config_to_app_entry(c: &ProcessConfig) -> AppEntry {
         Some(c.env_vars.clone())
     };
 
-    let ssl = c.ssl.as_ref().map(|s| vec![s.cert_path.clone(), s.key_path.clone()]);
+    let ssl = c
+        .ssl
+        .as_ref()
+        .map(|s| vec![s.cert_path.clone(), s.key_path.clone()]);
 
     let deny = if c.deny.is_empty() {
         None
@@ -489,28 +493,26 @@ async fn main() {
             client::execute(Request::Logs { name, lines }).await;
         }
 
-        Command::Export { o } => {
-            match client::send_request(Request::Export).await {
-                Ok(protocol::Response::ConfigList(configs)) => {
-                    let apps: Vec<AppEntry> = configs.iter().map(config_to_app_entry).collect();
-                    let file = ConfigFile { apps };
-                    let json = serde_json::to_string_pretty(&file).unwrap();
-                    match o {
-                        Some(path) => {
-                            if let Err(e) = std::fs::write(&path, &json) {
-                                eprintln!("error: failed to write '{}': {e}", path);
-                                std::process::exit(1);
-                            }
-                            println!("exported to {path}");
+        Command::Export { o } => match client::send_request(Request::Export).await {
+            Ok(protocol::Response::ConfigList(configs)) => {
+                let apps: Vec<AppEntry> = configs.iter().map(config_to_app_entry).collect();
+                let file = ConfigFile { apps };
+                let json = serde_json::to_string_pretty(&file).unwrap();
+                match o {
+                    Some(path) => {
+                        if let Err(e) = std::fs::write(&path, &json) {
+                            eprintln!("error: failed to write '{}': {e}", path);
+                            std::process::exit(1);
                         }
-                        None => println!("{json}"),
+                        println!("exported to {path}");
                     }
+                    None => println!("{json}"),
                 }
-                Ok(protocol::Response::Error(e)) => eprintln!("error: {e}"),
-                Ok(_) => eprintln!("error: unexpected response"),
-                Err(e) => eprintln!("error: {e}"),
             }
-        }
+            Ok(protocol::Response::Error(e)) => eprintln!("error: {e}"),
+            Ok(_) => eprintln!("error: unexpected response"),
+            Err(e) => eprintln!("error: {e}"),
+        },
 
         Command::Set { key, value } => {
             client::execute(Request::Set { key, value }).await;

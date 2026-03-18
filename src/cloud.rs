@@ -2,7 +2,7 @@ use crate::protocol::{ProcessInfo, Request, Response};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 use tokio::time::{Duration, sleep};
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{info, warn};
@@ -85,10 +85,7 @@ impl CloudAgent {
     }
 
     /// Start the cloud agent loop. This takes ownership and runs until shutdown.
-    pub async fn run(
-        mut self,
-        daemon_state: Arc<Mutex<crate::server::DaemonState>>,
-    ) {
+    pub async fn run(mut self, daemon_state: Arc<Mutex<crate::server::DaemonState>>) {
         let mut shutdown_rx = self.shutdown_rx.take().unwrap();
         let mut backoff = INITIAL_BACKOFF;
 
@@ -149,19 +146,17 @@ impl CloudAgent {
 
         // Wait for auth response
         match read.next().await {
-            Some(Ok(Message::Text(text))) => {
-                match serde_json::from_str::<CloudMessage>(&text) {
-                    Ok(CloudMessage::AuthOk) => {
-                        info!("cloud authentication successful");
-                    }
-                    Ok(CloudMessage::Error { message }) => {
-                        return Err(format!("cloud auth rejected: {message}"));
-                    }
-                    _ => {
-                        return Err(format!("unexpected auth response: {text}"));
-                    }
+            Some(Ok(Message::Text(text))) => match serde_json::from_str::<CloudMessage>(&text) {
+                Ok(CloudMessage::AuthOk) => {
+                    info!("cloud authentication successful");
                 }
-            }
+                Ok(CloudMessage::Error { message }) => {
+                    return Err(format!("cloud auth rejected: {message}"));
+                }
+                _ => {
+                    return Err(format!("unexpected auth response: {text}"));
+                }
+            },
             Some(Ok(msg)) => {
                 return Err(format!("unexpected message type during auth: {msg:?}"));
             }
@@ -289,17 +284,13 @@ pub async fn save_cloud_config(
     Ok(())
 }
 
-pub async fn remove_cloud_config(
-    state_store: &crate::state::StateStore,
-) -> Result<(), String> {
+pub async fn remove_cloud_config(state_store: &crate::state::StateStore) -> Result<(), String> {
     state_store.delete(CLOUD_API_KEY).await?;
     state_store.delete(CLOUD_SERVER_URL).await?;
     Ok(())
 }
 
-pub async fn load_cloud_config(
-    state_store: &crate::state::StateStore,
-) -> Option<(String, String)> {
+pub async fn load_cloud_config(state_store: &crate::state::StateStore) -> Option<(String, String)> {
     let api_key = state_store.get(CLOUD_API_KEY).await?;
     let url = state_store
         .get(CLOUD_SERVER_URL)

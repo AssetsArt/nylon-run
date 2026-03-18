@@ -7,7 +7,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 use tracing::{error, info};
 
 const SOCK_PATH: &str = "/var/run/nyrun/nyrun.sock";
@@ -139,19 +139,20 @@ async fn handle_request(request: Request, state: &Arc<Mutex<DaemonState>>) -> Re
                 Err(e) => Response::Error(e),
             }
         }
-        Request::Set { key, value } => {
-            match key.as_str() {
-                "cache-ttl" => match value.parse::<u64>() {
-                    Ok(secs) => {
-                        let mut st = state.lock().await;
-                        st.proxy_mgr.set_cache_ttl(secs);
-                        Response::Ok(format!("cache-ttl set to {}s", secs))
-                    }
-                    Err(_) => Response::Error(format!("invalid value '{}': expected seconds", value)),
-                },
-                _ => Response::Error(format!("unknown config key '{}'. available: cache-ttl", key)),
-            }
-        }
+        Request::Set { key, value } => match key.as_str() {
+            "cache-ttl" => match value.parse::<u64>() {
+                Ok(secs) => {
+                    let mut st = state.lock().await;
+                    st.proxy_mgr.set_cache_ttl(secs);
+                    Response::Ok(format!("cache-ttl set to {}s", secs))
+                }
+                Err(_) => Response::Error(format!("invalid value '{}': expected seconds", value)),
+            },
+            _ => Response::Error(format!(
+                "unknown config key '{}'. available: cache-ttl",
+                key
+            )),
+        },
         Request::Export => {
             let st = state.lock().await;
             Response::ConfigList(st.process_mgr.get_configs())

@@ -1,7 +1,7 @@
 use crate::protocol::ProcessConfig;
 use slatedb::Db;
-use slatedb::object_store::local::LocalFileSystem;
 use slatedb::object_store::ObjectStore;
+use slatedb::object_store::local::LocalFileSystem;
 use std::sync::Arc;
 use tracing::{error, info};
 
@@ -13,10 +13,10 @@ pub struct StateStore {
 
 impl StateStore {
     pub async fn open() -> Result<Self, String> {
-        let object_store: Arc<dyn ObjectStore> =
-            Arc::new(LocalFileSystem::new_with_prefix(STATE_DIR).map_err(|e| {
-                format!("failed to create local object store at {STATE_DIR}: {e}")
-            })?);
+        let object_store: Arc<dyn ObjectStore> = Arc::new(
+            LocalFileSystem::new_with_prefix(STATE_DIR)
+                .map_err(|e| format!("failed to create local object store at {STATE_DIR}: {e}"))?,
+        );
         let db = Db::open("/", object_store)
             .await
             .map_err(|e| format!("failed to open SlateDB: {e}"))?;
@@ -45,8 +45,7 @@ impl StateStore {
         // Write all current configs
         for config in configs {
             let key = format!("config:{}", config.name);
-            let value =
-                serde_json::to_vec(config).map_err(|e| format!("serialize error: {e}"))?;
+            let value = serde_json::to_vec(config).map_err(|e| format!("serialize error: {e}"))?;
             self.db
                 .put(key.as_bytes(), &value)
                 .await
@@ -102,7 +101,10 @@ impl StateStore {
             .put(key.as_bytes(), value.as_bytes())
             .await
             .map_err(|e| format!("put error: {e}"))?;
-        self.db.flush().await.map_err(|e| format!("flush error: {e}"))?;
+        self.db
+            .flush()
+            .await
+            .map_err(|e| format!("flush error: {e}"))?;
         Ok(())
     }
 

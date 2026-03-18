@@ -83,10 +83,7 @@ impl ProcessManager {
 
         // OCI: pull and extract if needed
         if config.is_oci {
-            let reference = config
-                .oci_reference
-                .as_deref()
-                .unwrap_or(&config.path);
+            let reference = config.oci_reference.as_deref().unwrap_or(&config.path);
             let extract_dir = match crate::oci::pull_and_extract(reference, &config.name).await {
                 Ok(dir) => {
                     if let Some(m) = &self.metrics {
@@ -117,9 +114,7 @@ impl ProcessManager {
             if !config.allow.iter().any(|a| a == "all") && !config.deny.contains(&"io".to_string())
             {
                 config.deny.push("io".to_string());
-                config
-                    .allow
-                    .push(extract_dir.to_string_lossy().to_string());
+                config.allow.push(extract_dir.to_string_lossy().to_string());
             }
 
             // If --allow all, clear deny io so sandbox doesn't restrict
@@ -457,9 +452,7 @@ impl ProcessManager {
         let pids: Vec<(String, Pid)> = self
             .processes
             .iter()
-            .filter_map(|(name, proc)| {
-                proc.pid.map(|pid| (name.clone(), Pid::from_u32(pid)))
-            })
+            .filter_map(|(name, proc)| proc.pid.map(|pid| (name.clone(), Pid::from_u32(pid))))
             .collect();
 
         if pids.is_empty() {
@@ -473,9 +466,7 @@ impl ProcessManager {
 
         for (name, pid) in &pids {
             if let Some(proc) = self.sys.process(*pid) {
-                let labels = crate::metrics::ProcessLabels {
-                    name: name.clone(),
-                };
+                let labels = crate::metrics::ProcessLabels { name: name.clone() };
                 metrics
                     .process_cpu_usage
                     .get_or_create(&labels)
