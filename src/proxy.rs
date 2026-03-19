@@ -650,6 +650,7 @@ impl ProxyManager {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn start_pingora_server(
     ports: Vec<u16>,
     tls_ports: HashSet<u16>,
