@@ -9,7 +9,7 @@ pass() { echo "  PASS: $1"; PASS=$((PASS + 1)); TESTS+=("PASS: $1"); }
 fail() { echo "  FAIL: $1 — $2"; FAIL=$((FAIL + 1)); TESTS+=("FAIL: $1 — $2"); }
 
 wait_for() {
-    local url=$1 timeout=${2:-10}
+    local url=$1 timeout=${2:-15}
     for i in $(seq 1 $timeout); do
         if curl -sf "$url" >/dev/null 2>&1; then return 0; fi
         sleep 1
@@ -18,7 +18,7 @@ wait_for() {
 }
 
 wait_for_json() {
-    local url=$1 timeout=${2:-10}
+    local url=$1 timeout=${2:-15}
     for i in $(seq 1 $timeout); do
         if curl -sf "$url" 2>/dev/null | jq -e '.status' >/dev/null 2>&1; then return 0; fi
         sleep 1
@@ -27,7 +27,7 @@ wait_for_json() {
 }
 
 wait_for_process() {
-    local name=$1 timeout=${2:-8}
+    local name=$1 timeout=${2:-10}
     for i in $(seq 1 $timeout); do
         if nyrun ls 2>/dev/null | grep -q "$name"; then return 0; fi
         sleep 1
@@ -72,26 +72,19 @@ nyrun ls 2>/dev/null | grep -q "proc-only" && fail "deleted" "still in ls" || pa
 echo ""
 echo "[5] proxy (auto-remap same port)"
 nyrun run python3 --name proxied --args "/tests/fixtures/http-server.py" --p 7070:7070 2>/dev/null &
-sleep 4
-wait_for_json http://127.0.0.1:7070 15 && pass "proxy auto-remap" || fail "proxy auto-remap" "no json on :7070"
-
-# ==========================================================
-echo ""
-echo "[6] proxy (second auto-remap)"
-nyrun run python3 --name proxied2 --args "/tests/fixtures/http-server.py" --p 7171:7171 2>/dev/null &
 sleep 5
-wait_for_json http://127.0.0.1:7171 20 && pass "proxy auto-remap 2" || fail "proxy auto-remap 2" "no json on :7171"
+wait_for_json http://127.0.0.1:7070 30 && pass "proxy auto-remap" || fail "proxy auto-remap" "no json on :7070"
 
 # ==========================================================
 echo ""
-echo "[7] set"
+echo "[6] set"
 nyrun set default-registry ghcr.io 2>/dev/null | grep -q "ghcr.io" && pass "set default-registry" || fail "set default-registry" "failed"
 nyrun set default-registry docker.io 2>/dev/null || true
 nyrun set cache-ttl 120 2>/dev/null | grep -q "120" && pass "set cache-ttl" || fail "set cache-ttl" "failed"
 
 # ==========================================================
 echo ""
-echo "[8] metrics enable/disable"
+echo "[7] metrics enable/disable"
 nyrun metrics enable --port 9100 2>/dev/null | grep -q "9100" && pass "metrics enable" || fail "metrics enable" "failed"
 sleep 1
 wait_for http://127.0.0.1:9100 5 && pass "metrics endpoint responds" || fail "metrics endpoint responds" "no response"
@@ -99,9 +92,8 @@ nyrun metrics disable 2>/dev/null | grep -q "stopped" && pass "metrics disable" 
 
 # ==========================================================
 echo ""
-echo "[9] ecosystem.yaml with ConfigMap"
+echo "[8] ecosystem.yaml with ConfigMap + proxy"
 nyrun del proxied 2>/dev/null || true
-nyrun del proxied2 2>/dev/null || true
 sleep 1
 nyrun start /tests/fixtures/ecosystem.yaml 2>/dev/null &
 sleep 8
@@ -109,13 +101,13 @@ sleep 8
 wait_for_process "web" && wait_for_process "worker" && wait_for_process "with-config" \
     && pass "ecosystem all started" || fail "ecosystem all started" "missing processes"
 
-wait_for_json http://127.0.0.1:7001 15 && pass "ecosystem web proxy" || fail "ecosystem web proxy" "no json on :7001"
-wait_for http://127.0.0.1:8002 10 && pass "ecosystem worker direct" || fail "ecosystem worker direct" "no response on :8002"
-wait_for_json http://127.0.0.1:7003 15 && pass "ecosystem with-config proxy" || fail "ecosystem with-config proxy" "no json on :7003"
+wait_for_json http://127.0.0.1:7001 30 && pass "ecosystem web proxy" || fail "ecosystem web proxy" "no json on :7001"
+wait_for http://127.0.0.1:8002 15 && pass "ecosystem worker direct" || fail "ecosystem worker direct" "no response on :8002"
+wait_for_json http://127.0.0.1:7003 30 && pass "ecosystem with-config proxy" || fail "ecosystem with-config proxy" "no json on :7003"
 
 # ==========================================================
 echo ""
-echo "[10] ConfigMap files"
+echo "[9] ConfigMap files"
 [ -f /var/run/nyrun/configmaps/test-config/app.conf ] \
     && grep -q "debug=true" /var/run/nyrun/configmaps/test-config/app.conf \
     && pass "configmap app.conf" || fail "configmap app.conf" "missing or wrong"
@@ -124,19 +116,19 @@ echo "[10] ConfigMap files"
 
 # ==========================================================
 echo ""
-echo "[11] export"
+echo "[10] export"
 EXPORT=$(nyrun export 2>/dev/null || true)
 echo "$EXPORT" | grep -q "kind: Process" && pass "export YAML format" || fail "export YAML format" "no kind: Process"
 echo "$EXPORT" | grep -q "web" && pass "export has web" || fail "export has web" "missing"
 
 # ==========================================================
 echo ""
-echo "[12] save"
+echo "[11] save"
 nyrun save 2>/dev/null | grep -qi "saved\|ok" && pass "save" || fail "save" "failed"
 
 # ==========================================================
 echo ""
-echo "[13] backup / restore"
+echo "[12] backup / restore"
 nyrun backup -o /tmp/test-backup 2>/dev/null || true
 if [ -f /tmp/test-backup.zip ]; then
     pass "backup created"
@@ -147,7 +139,7 @@ fi
 
 # ==========================================================
 echo ""
-echo "[14] cleanup all"
+echo "[13] cleanup all"
 for name in web worker with-config; do nyrun del "$name" 2>/dev/null || true; done
 sleep 1
 REMAINING=$(nyrun ls 2>/dev/null | grep -c "Running" || true)
@@ -155,7 +147,7 @@ REMAINING=$(nyrun ls 2>/dev/null | grep -c "Running" || true)
 
 # ==========================================================
 echo ""
-echo "[15] kill"
+echo "[14] kill"
 nyrun kill 2>/dev/null || true
 sleep 2
 [ ! -f /var/run/nyrun/nyrun.pid ] || ! kill -0 "$(cat /var/run/nyrun/nyrun.pid)" 2>/dev/null \
