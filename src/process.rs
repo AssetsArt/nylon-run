@@ -555,7 +555,8 @@ impl ProcessManager {
         }
     }
 
-    /// Check for crashed processes and auto-restart them
+    /// Check for crashed processes and auto-restart them.
+    /// Processes that exit with code 0 are marked as Stopped (no restart).
     pub async fn check_and_restart(&mut self) {
         let mut to_restart = Vec::new();
 
@@ -566,13 +567,24 @@ impl ProcessManager {
             if let Some(ref mut child) = proc.child {
                 match child.try_wait() {
                     Ok(Some(exit_status)) => {
-                        warn!(
-                            name = %name,
-                            status = ?exit_status,
-                            "process exited unexpectedly"
-                        );
-                        proc.status = ProcessStatus::Errored;
-                        to_restart.push(name.clone());
+                        if exit_status.success() {
+                            info!(
+                                name = %name,
+                                status = ?exit_status,
+                                "process exited successfully"
+                            );
+                            proc.status = ProcessStatus::Stopped;
+                            proc.child = None;
+                            proc.pid = None;
+                        } else {
+                            warn!(
+                                name = %name,
+                                status = ?exit_status,
+                                "process exited unexpectedly"
+                            );
+                            proc.status = ProcessStatus::Errored;
+                            to_restart.push(name.clone());
+                        }
                     }
                     Ok(None) => {} // still running
                     Err(e) => {

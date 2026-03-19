@@ -223,6 +223,12 @@ async fn handle_request(request: Request, state: &Arc<Mutex<DaemonState>>) -> Re
             let msg = st.process_mgr.kill_all().await;
             let _ = st.state_store.save(&[]).await;
             st.state_store.close().await;
+            drop(st);
+            // Schedule daemon exit after response is sent
+            tokio::spawn(async {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                std::process::exit(0);
+            });
             Response::Ok(msg)
         }
         Request::MetricsEnable { port } => {

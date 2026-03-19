@@ -64,6 +64,7 @@ pub struct NyrunProxy {
     cache: Cache<String, (ResponseHeader, Bytes)>,
     metrics: Option<Metrics>,
     challenge_store: ChallengeStore,
+    dead_ports: Arc<RwLock<HashSet<u16>>>,
 }
 
 pub struct ProxyCtx {
@@ -112,6 +113,15 @@ impl ProxyHttp for NyrunProxy {
         session: &mut Session,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<bool> {
+        // Reject connections on dead ports (ports with no remaining routes)
+        let listen_port = get_listen_port(session);
+        if self.dead_ports.read().await.contains(&listen_port) {
+            return Err(pingora::Error::explain(
+                pingora::ErrorType::ConnectError,
+                "port closed",
+            ));
+        }
+
         // Track request size from Content-Length
         ctx.request_bytes = session
             .req_header()
@@ -487,6 +497,7 @@ pub struct ProxyManager {
     cert_store: Arc<DynamicCertStore>,
     metrics: Option<Metrics>,
     challenge_store: ChallengeStore,
+    dead_ports: Arc<RwLock<HashSet<u16>>>,
 }
 
 impl ProxyManager {
@@ -505,6 +516,7 @@ impl ProxyManager {
             cert_store: Arc::new(DynamicCertStore::new()),
             metrics,
             challenge_store,
+            dead_ports: Arc::new(RwLock::new(HashSet::new())),
         }
     }
 
@@ -563,6 +575,12 @@ impl ProxyManager {
             self.tls_ports.insert(port);
         }
 
+        // Revive port if it was previously marked dead
+        {
+            let mut dp = self.dead_ports.write().await;
+            dp.remove(&port);
+        }
+
         let need_new_listener = !self.ports.contains(&port);
         if need_new_listener {
             self.ports.push(port);
@@ -579,6 +597,7 @@ impl ProxyManager {
             let cert_store = Arc::clone(&self.cert_store);
             let metrics = self.metrics.clone();
             let challenge_store = self.challenge_store.clone();
+            let dead_ports = Arc::clone(&self.dead_ports);
             std::thread::spawn(move || {
                 start_pingora_server(
                     ports,
@@ -588,6 +607,7 @@ impl ProxyManager {
                     cert_store,
                     metrics,
                     challenge_store,
+                    dead_ports,
                 );
             });
         }
@@ -605,7 +625,27 @@ impl ProxyManager {
 
     pub async fn remove_routes(&mut self, name: &str) {
         let mut table = self.routes.write().await;
+
+        // Collect ports used by this app before removal
+        let removed_ports: HashSet<u16> = table
+            .entries
+            .iter()
+            .filter(|r| r.name == name)
+            .map(|r| r.port)
+            .collect();
+
         table.entries.retain(|r| r.name != name);
+
+        // Check which removed ports are now orphaned (no remaining routes)
+        for port in &removed_ports {
+            let still_used = table.entries.iter().any(|r| r.port == *port);
+            if !still_used {
+                self.ports.retain(|p| p != port);
+                self.dead_ports.write().await.insert(*port);
+                info!(port, "port marked dead (no remaining routes)");
+            }
+        }
+
         info!(name, "routes removed");
     }
 }
@@ -618,6 +658,7 @@ fn start_pingora_server(
     cert_store: Arc<DynamicCertStore>,
     metrics: Option<Metrics>,
     challenge_store: ChallengeStore,
+    dead_ports: Arc<RwLock<HashSet<u16>>>,
 ) {
     let mut server = match Server::new(None) {
         Ok(s) => s,
@@ -646,6 +687,7 @@ fn start_pingora_server(
         cache,
         metrics,
         challenge_store,
+        dead_ports,
     };
     let mut service = http_proxy_service(&server.configuration, proxy);
 

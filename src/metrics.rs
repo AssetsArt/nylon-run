@@ -227,7 +227,7 @@ pub async fn serve_metrics_with_shutdown(
                     }
 
                     let resp = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: application/openmetrics-text; version=1.0.0; charset=utf-8\r\nContent-Length: {}\r\n\r\n{}",
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/plain; version=0.0.4; charset=utf-8\r\nContent-Length: {}\r\n\r\n{}",
                         body.len(),
                         body
                     );
