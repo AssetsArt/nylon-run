@@ -17,6 +17,8 @@ spec:
   port: "7001:7001"
   env:
     APP_NAME: web-test
+  volumes:
+    - configmap:test-config:/etc/app
 ---
 kind: Process
 metadata:
@@ -26,15 +28,3 @@ spec:
   args: "/tests/fixtures/http-server.py"
   env:
     PORT: "8002"
----
-kind: Process
-metadata:
-  name: with-config
-spec:
-  path: python3
-  args: "/tests/fixtures/http-server.py"
-  port: "7003:7003"
-  env:
-    APP_NAME: config-test
-  volumes:
-    - configmap:test-config:/etc/app

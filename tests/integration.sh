@@ -98,12 +98,11 @@ sleep 1
 nyrun start /tests/fixtures/ecosystem.yaml 2>/dev/null &
 sleep 8
 
-wait_for_process "web" && wait_for_process "worker" && wait_for_process "with-config" \
+wait_for_process "web" && wait_for_process "worker" \
     && pass "ecosystem all started" || fail "ecosystem all started" "missing processes"
 
 wait_for_json http://127.0.0.1:7001 30 && pass "ecosystem web proxy" || fail "ecosystem web proxy" "no json on :7001"
 wait_for http://127.0.0.1:8002 15 && pass "ecosystem worker direct" || fail "ecosystem worker direct" "no response on :8002"
-wait_for_json http://127.0.0.1:7003 30 && pass "ecosystem with-config proxy" || fail "ecosystem with-config proxy" "no json on :7003"
 
 # ==========================================================
 echo ""
@@ -140,7 +139,7 @@ fi
 # ==========================================================
 echo ""
 echo "[13] cleanup all"
-for name in web worker with-config; do nyrun del "$name" 2>/dev/null || true; done
+for name in web worker; do nyrun del "$name" 2>/dev/null || true; done
 sleep 1
 REMAINING=$(nyrun ls 2>/dev/null | grep -c "Running" || true)
 [ "$REMAINING" -eq 0 ] && pass "all cleaned up" || fail "all cleaned up" "$REMAINING running"
