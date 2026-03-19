@@ -14,7 +14,7 @@ metadata:
 spec:
   path: python3
   args: "/tests/fixtures/http-server.py"
-  port: "7001:7001"
+  port: "7070:7070"
   env:
     APP_NAME: web-test
   volumes:

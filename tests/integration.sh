@@ -101,7 +101,7 @@ sleep 8
 wait_for_process "web" && wait_for_process "worker" \
     && pass "ecosystem all started" || fail "ecosystem all started" "missing processes"
 
-wait_for_json http://127.0.0.1:7001 30 && pass "ecosystem web proxy" || fail "ecosystem web proxy" "no json on :7001"
+wait_for_json http://127.0.0.1:7070 30 && pass "ecosystem web proxy" || fail "ecosystem web proxy" "no json on :7001"
 wait_for http://127.0.0.1:8002 15 && pass "ecosystem worker direct" || fail "ecosystem worker direct" "no response on :8002"
 
 # ==========================================================
