@@ -96,5 +96,5 @@ fi
 
 echo ""
 echo "Quick start:"
-echo "  nyrun bin ./my-app"
+echo "  nyrun run ./my-app"
 echo "  nyrun run ./my-app --p 80:8000"
