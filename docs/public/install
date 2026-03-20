@@ -16,11 +16,50 @@ OS="$(uname -s)"
 ARCH="$(uname -m)"
 
 platform=""
+
+# Detect libc on Linux (musl vs gnu)
+detect_libc() {
+    if ldd --version 2>&1 | grep -qi musl; then
+        echo "musl"
+    elif command -v ldd >/dev/null 2>&1; then
+        # Check glibc version — if too old, fall back to musl
+        local glibc_ver
+        glibc_ver=$(ldd --version 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+$' || true)
+        if [ -n "$glibc_ver" ]; then
+            local major minor
+            major=$(echo "$glibc_ver" | cut -d. -f1)
+            minor=$(echo "$glibc_ver" | cut -d. -f2)
+            # Require glibc >= 2.38 for gnu builds
+            if [ "$major" -lt 2 ] || { [ "$major" -eq 2 ] && [ "$minor" -lt 38 ]; }; then
+                echo "musl"
+                return
+            fi
+        fi
+        echo "gnu"
+    else
+        # No ldd available, assume musl is safest
+        echo "musl"
+    fi
+}
+
 case "$OS" in
     Linux)
+        LIBC=$(detect_libc)
         case "$ARCH" in
-            x86_64)        platform="linux-amd64" ;;
-            aarch64|arm64) platform="linux-arm64" ;;
+            x86_64)
+                if [ "$LIBC" = "musl" ]; then
+                    platform="linux-amd64-musl"
+                else
+                    platform="linux-amd64"
+                fi
+                ;;
+            aarch64|arm64)
+                if [ "$LIBC" = "musl" ]; then
+                    platform="linux-arm64-musl"
+                else
+                    platform="linux-arm64"
+                fi
+                ;;
             *)             echo "Unsupported architecture: $ARCH"; exit 1 ;;
         esac
         ;;

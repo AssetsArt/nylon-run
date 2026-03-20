@@ -70,7 +70,13 @@ case "$ARCH" in
     *)              error "Unsupported architecture: $ARCH"; exit 1 ;;
 esac
 
-log "Platform: ${PLATFORM}/${ARCH_LABEL}"
+# Detect musl from target
+LIBC_LABEL=""
+if [[ "$TARGET" == *"-musl" ]]; then
+    LIBC_LABEL="-musl"
+fi
+
+log "Platform: ${PLATFORM}/${ARCH_LABEL}${LIBC_LABEL}"
 
 # ─── Setup output directory ──────────────────────────────────────────
 OUTPUT_PATH="$PROJECT_ROOT/$OUTPUT_DIR"
@@ -116,7 +122,7 @@ if file "$OUTPUT_PATH/nyrun" 2>/dev/null | grep -q "ELF\|Mach-O"; then
 fi
 
 # ─── Package ─────────────────────────────────────────────────────────
-ARTIFACT="nyrun-${PLATFORM}-${ARCH_LABEL}"
+ARTIFACT="nyrun-${PLATFORM}-${ARCH_LABEL}${LIBC_LABEL}"
 log "Packaging ${ARTIFACT}.tar.gz..."
 cd "$OUTPUT_PATH"
 tar czf "${ARTIFACT}.tar.gz" nyrun
